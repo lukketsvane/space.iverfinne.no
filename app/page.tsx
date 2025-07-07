@@ -6,7 +6,7 @@ import { useGLTF, OrbitControls, Environment, Html, useProgress } from "@react-t
 import { Upload, Folder, ChevronLeft, Palette, Trash2, Menu, X, Settings, ImageIcon, Pencil } from "lucide-react"
 import { upload } from "@vercel/blob/client"
 import useSWR, { useSWRConfig } from "swr"
-import { Toaster, toast } from "sonner"
+import { toast } from "sonner"
 import * as THREE from "three"
 
 import { Button } from "@/components/ui/button"
@@ -42,7 +42,7 @@ function Loader() {
   const { progress } = useProgress()
   return (
     <Html center>
-      <div className="text-white text-lg">{progress.toFixed(2)} % loaded</div>
+      <div className="text-muted-foreground text-sm">{progress.toFixed(0)}%</div>
     </Html>
   )
 }
@@ -61,9 +61,9 @@ function ModelViewer({
       if ((child as THREE.Mesh).isMesh) {
         const mesh = child as THREE.Mesh
         if (materialMode === "normal") {
-          mesh.material = new THREE.MeshNormalMaterial()
+          mesh.material = new THREE.MeshNormalMaterial({ flatShading: true })
         } else if (materialMode === "white") {
-          mesh.material = new THREE.MeshStandardMaterial({ color: "white" })
+          mesh.material = new THREE.MeshStandardMaterial({ color: "white", metalness: 0, roughness: 0.5 })
         }
         // For 'pbr', we use the original materials from the GLTF file.
       }
@@ -83,7 +83,7 @@ export default function HomePage() {
 
   // Viewer settings state
   const [materialMode, setMaterialMode] = useState<"pbr" | "normal" | "white">("pbr")
-  const [bgColor, setBgColor] = useState("#000000")
+  const [bgColor, setBgColor] = useState("#FFFFFF")
   const [lightIntensity, setLightIntensity] = useState(1)
   const [isSidebarOpen, setIsSidebarOpen] = useState(false)
   const [isSettingsOpen, setIsSettingsOpen] = useState(false)
@@ -115,10 +115,8 @@ export default function HomePage() {
           handleUploadUrl: "/api/upload",
         })
 
-        // Update progress for the uploaded file
         setUploadingFiles((prev) => prev.map((f) => (f.name === file.name ? { ...f, progress: 100 } : f)))
 
-        // Add to database
         const modelName = file.name.replace(/\.glb$/, "")
         await fetch("/api/models", {
           method: "POST",
@@ -137,8 +135,8 @@ export default function HomePage() {
         setUploadingFiles((prev) => prev.filter((f) => f.name !== file.name))
       }
     }
-    mutate("/api/models") // Re-fetch the models list
-    setUploadingFiles([]) // Clear the uploading list
+    mutate("/api/models")
+    setUploadingFiles([])
   }
 
   const handleModelUpdate = async (id: string, updates: Partial<Omit<Model, "id" | "created_at">>) => {
@@ -152,7 +150,7 @@ export default function HomePage() {
 
       const updatedModel = await res.json()
       setSelectedModel(updatedModel)
-      mutate("/api/models") // Revalidate the list
+      mutate("/api/models")
       toast.success("Model updated successfully!")
     } catch (err) {
       toast.error((err as Error).message)
@@ -219,9 +217,8 @@ export default function HomePage() {
 
   if (selectedModel) {
     return (
-      <div className="w-full h-screen bg-black relative">
-        <Toaster richColors />
-        <Canvas camera={{ fov: 50, position: [0, 1, 5] }}>
+      <div className="w-full h-screen bg-background relative">
+        <Canvas camera={{ fov: 50, position: [0, 1, 5] }} style={{ background: bgColor }}>
           <Suspense fallback={<Loader />}>
             <Environment preset="city" />
             <ambientLight intensity={0.2} />
@@ -231,27 +228,25 @@ export default function HomePage() {
           <OrbitControls enablePan={true} enableZoom={true} enableRotate={true} />
         </Canvas>
 
-        {/* Top Left Controls */}
         <div className="absolute top-4 left-4">
           <Button
             variant="ghost"
             size="icon"
             onClick={() => setSelectedModel(null)}
-            className="text-white hover:bg-gray-700 hover:text-white"
+            className="text-foreground hover:bg-accent"
           >
             <ChevronLeft className="h-6 w-6" />
           </Button>
         </div>
 
-        {/* Top Right Controls (Settings) */}
         <div className="absolute top-4 right-4">
           <Sheet open={isSettingsOpen} onOpenChange={setIsSettingsOpen}>
             <SheetTrigger asChild>
-              <Button variant="ghost" size="icon" className="text-white hover:bg-gray-700 hover:text-white">
-                <Settings className="h-6 w-6" />
+              <Button variant="ghost" size="icon" className="text-foreground hover:bg-accent">
+                <Settings className="h-5 w-5" />
               </Button>
             </SheetTrigger>
-            <SheetContent className="bg-gray-900 text-white border-l-gray-700 w-[350px] sm:w-[400px]">
+            <SheetContent className="bg-background text-foreground border-l w-[350px] sm:w-[400px]">
               <SettingsPanel
                 model={selectedModel}
                 onUpdate={handleModelUpdate}
@@ -266,31 +261,27 @@ export default function HomePage() {
           </Sheet>
         </div>
 
-        {/* Bottom Controls */}
-        <div className="absolute bottom-4 left-1/2 -translate-x-1/2 bg-gray-800/50 backdrop-blur-sm p-2 rounded-full flex items-center gap-2">
+        <div className="absolute bottom-4 left-1/2 -translate-x-1/2 bg-background/50 border backdrop-blur-sm p-1 rounded-lg flex items-center gap-1">
           <Button
             variant={materialMode === "pbr" ? "secondary" : "ghost"}
             size="icon"
             onClick={() => setMaterialMode("pbr")}
-            className="text-white rounded-full"
           >
-            <Palette />
+            <Palette className="h-5 w-5" />
           </Button>
           <Button
             variant={materialMode === "normal" ? "secondary" : "ghost"}
             size="icon"
             onClick={() => setMaterialMode("normal")}
-            className="text-white rounded-full"
           >
-            <div className="w-6 h-6 rounded-full bg-gradient-to-br from-red-500 via-green-500 to-blue-500" />
+            <div className="w-5 h-5 rounded-full bg-gradient-to-br from-red-500 via-green-500 to-blue-500" />
           </Button>
           <Button
             variant={materialMode === "white" ? "secondary" : "ghost"}
             size="icon"
             onClick={() => setMaterialMode("white")}
-            className="text-white rounded-full"
           >
-            <div className="w-6 h-6 rounded-full bg-white" />
+            <div className="w-5 h-5 rounded-full bg-white border" />
           </Button>
         </div>
       </div>
@@ -298,8 +289,7 @@ export default function HomePage() {
   }
 
   return (
-    <div className="bg-gray-900 text-white min-h-screen flex">
-      <Toaster richColors />
+    <div className="bg-background text-foreground h-screen flex">
       <input
         type="file"
         ref={fileInputRef}
@@ -309,64 +299,62 @@ export default function HomePage() {
         accept=".glb"
       />
 
-      {/* Sidebar */}
       <aside
         className={cn(
-          "bg-gray-950 p-4 flex-col md:flex md:w-64 transition-all duration-300 ease-in-out",
-          isSidebarOpen ? "flex w-64" : "hidden",
+          "bg-background border-r p-4 flex-col md:flex md:w-60 transition-all duration-300 ease-in-out",
+          isSidebarOpen ? "flex w-60" : "hidden",
         )}
       >
         <div className="mb-8">
-          <h1 className="text-2xl font-bold">My Models</h1>
+          <h1 className="text-xl font-bold tracking-tighter">My Models</h1>
         </div>
         <nav className="flex flex-col gap-2">
           <Button variant="ghost" className="justify-start gap-2" onClick={() => fileInputRef.current?.click()}>
-            <Upload className="h-5 w-5" /> Upload
+            <Upload className="h-4 w-4" /> Upload
           </Button>
           <Button variant="secondary" className="justify-start gap-2">
-            <Folder className="h-5 w-5" /> Assets
+            <Folder className="h-4 w-4" /> Assets
           </Button>
         </nav>
       </aside>
 
-      {/* Main Content */}
-      <main className="flex-1 p-4 md:p-8 overflow-y-auto">
+      <main className="flex-1 p-4 md:p-8 flex flex-col overflow-hidden">
         <div className="md:hidden mb-4 flex items-center justify-between">
           <Button variant="ghost" size="icon" onClick={() => setIsSidebarOpen(!isSidebarOpen)}>
             {isSidebarOpen ? <X /> : <Menu />}
           </Button>
-          <h1 className="text-xl font-bold">My Models</h1>
+          <h1 className="text-lg font-bold tracking-tighter">My Models</h1>
         </div>
 
         {isLoading && (
           <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-4">
             {Array.from({ length: 12 }).map((_, i) => (
-              <Skeleton key={i} className="aspect-square rounded-lg bg-gray-800" />
+              <Skeleton key={i} className="aspect-square rounded-lg bg-muted" />
             ))}
           </div>
         )}
 
-        {error && <div className="text-center text-red-400">Failed to load models.</div>}
+        {error && <div className="text-center text-destructive">Failed to load models.</div>}
 
         {!isLoading && models?.length === 0 && (
-          <div className="text-center text-gray-400 flex flex-col items-center justify-center h-full">
-            <Folder size={64} className="mb-4" />
-            <h2 className="text-2xl font-semibold">Your gallery is empty</h2>
-            <p className="mt-2">Click the upload button to add your first model.</p>
+          <div className="text-center text-muted-foreground flex flex-col items-center justify-center h-full">
+            <Folder size={48} className="mb-4" />
+            <h2 className="text-xl font-semibold">Your gallery is empty</h2>
+            <p className="mt-2 text-sm">Click the upload button to add your first model.</p>
             <Button className="mt-4" onClick={() => fileInputRef.current?.click()}>
               <Upload className="mr-2 h-4 w-4" /> Upload Model
             </Button>
           </div>
         )}
 
-        <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-4">
+        <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-4 overflow-y-auto">
           {uploadingFiles.map((file) => (
             <div
               key={file.name}
-              className="aspect-square rounded-lg bg-gray-800 flex flex-col items-center justify-center p-2"
+              className="aspect-square rounded-lg border bg-muted flex flex-col items-center justify-center p-2"
             >
-              <div className="w-full bg-gray-700 rounded-full h-2.5 mb-2">
-                <div className="bg-blue-600 h-2.5 rounded-full" style={{ width: `${file.progress}%` }}></div>
+              <div className="w-full bg-border rounded-full h-1.5 mb-2">
+                <div className="bg-primary h-1.5 rounded-full" style={{ width: `${file.progress}%` }}></div>
               </div>
               <p className="text-xs text-center truncate w-full">{file.name}</p>
             </div>
@@ -380,13 +368,13 @@ export default function HomePage() {
               <img
                 src={model.thumbnail_url || "/placeholder.svg"}
                 alt={model.name}
-                className="w-full h-full object-cover transition-transform duration-300 group-hover:scale-110"
+                className="w-full h-full object-cover transition-transform duration-300 group-hover:scale-105"
                 onError={(e) => {
                   ;(e.target as HTMLImageElement).src = `/placeholder.svg?width=400&height=400&query=error`
                 }}
               />
-              <div className="absolute inset-0 bg-black/50 opacity-0 group-hover:opacity-100 transition-opacity duration-300 flex items-end p-2">
-                <p className="text-sm font-semibold truncate">{model.name}</p>
+              <div className="absolute inset-0 bg-gradient-to-t from-black/40 to-transparent opacity-0 group-hover:opacity-100 transition-opacity duration-300 flex items-end p-3">
+                <p className="text-sm font-medium text-white truncate">{model.name}</p>
               </div>
             </div>
           ))}
@@ -433,12 +421,12 @@ function SettingsPanel({
 
   return (
     <div className="p-4 flex flex-col h-full">
-      <h2 className="text-2xl font-bold mb-6">Settings</h2>
+      <h2 className="text-xl font-bold mb-6">Settings</h2>
 
       <div className="space-y-6 flex-1">
         <div>
-          <label className="text-sm font-medium text-gray-400">Thumbnail</label>
-          <div className="mt-2 relative aspect-square w-full rounded-lg overflow-hidden group">
+          <label className="text-xs font-medium text-muted-foreground">Thumbnail</label>
+          <div className="mt-2 relative aspect-video w-full rounded-lg overflow-hidden group">
             <img
               src={model.thumbnail_url || "/placeholder.svg"}
               alt={model.name}
@@ -463,7 +451,7 @@ function SettingsPanel({
         </div>
 
         <div>
-          <label htmlFor="model-name" className="text-sm font-medium text-gray-400">
+          <label htmlFor="model-name" className="text-xs font-medium text-muted-foreground">
             Model Name
           </label>
           <div className="relative mt-2">
@@ -473,14 +461,14 @@ function SettingsPanel({
               onChange={(e) => setName(e.target.value)}
               onBlur={handleNameBlur}
               onKeyDown={(e) => e.key === "Enter" && handleNameBlur()}
-              className="bg-gray-800 border-gray-700 text-white pr-8"
+              className="bg-transparent border pr-8"
             />
-            <Pencil className="absolute right-2 top-1/2 -translate-y-1/2 h-4 w-4 text-gray-500" />
+            <Pencil className="absolute right-2.5 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
           </div>
         </div>
 
         <div>
-          <label className="text-sm font-medium text-gray-400">Light Intensity</label>
+          <label className="text-xs font-medium text-muted-foreground">Light Intensity</label>
           <Slider
             value={[lightIntensity]}
             onValueChange={(v) => onLightIntensityChange(v[0])}
@@ -492,12 +480,12 @@ function SettingsPanel({
         </div>
 
         <div>
-          <label className="text-sm font-medium text-gray-400">Background Color</label>
+          <label className="text-xs font-medium text-muted-foreground">Background Color</label>
           <Input
             type="color"
             value={bgColor}
             onChange={(e) => onBgColorChange(e.target.value)}
-            className="w-full h-10 p-1 mt-2 bg-gray-800 border-gray-700"
+            className="w-full h-10 p-1 mt-2 bg-transparent border"
           />
         </div>
       </div>
@@ -509,10 +497,10 @@ function SettingsPanel({
       </div>
 
       <Dialog open={showDeleteConfirm} onOpenChange={setShowDeleteConfirm}>
-        <DialogContent className="bg-gray-900 text-white">
+        <DialogContent className="bg-background text-foreground">
           <DialogHeader>
             <DialogTitle>Are you sure?</DialogTitle>
-            <DialogDescription className="text-gray-400">
+            <DialogDescription className="text-muted-foreground">
               This will permanently delete the model "{model.name}". This action cannot be undone.
             </DialogDescription>
           </DialogHeader>
