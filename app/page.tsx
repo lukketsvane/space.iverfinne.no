@@ -1,9 +1,24 @@
 "use client"
 
-import { useState, useRef, useEffect, Suspense, useCallback } from "react"
+import type React from "react"
+
+import { useState, useRef, useEffect, Suspense, useCallback, Fragment } from "react"
 import { Canvas } from "@react-three/fiber"
 import { useGLTF, OrbitControls, Environment, Html, useProgress } from "@react-three/drei"
-import { Upload, Folder, ChevronLeft, Palette, Trash2, Menu, X, Settings, ImageIcon, Pencil } from "lucide-react"
+import {
+  Upload,
+  FolderIcon,
+  ChevronLeft,
+  Palette,
+  Trash2,
+  Settings,
+  ImageIcon,
+  Pencil,
+  Cuboid,
+  MoreVertical,
+  FolderPlus,
+  ChevronRight,
+} from "lucide-react"
 import { upload } from "@vercel/blob/client"
 import useSWR, { useSWRConfig } from "swr"
 import { Toaster, toast } from "sonner"
@@ -22,22 +37,45 @@ import {
 } from "@/components/ui/dialog"
 import { Sheet, SheetContent, SheetTrigger } from "@/components/ui/sheet"
 import { Skeleton } from "@/components/ui/skeleton"
-import { cn } from "@/lib/utils"
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu"
+import {
+  SidebarProvider,
+  Sidebar,
+  SidebarHeader,
+  SidebarContent,
+  SidebarMenu,
+  SidebarMenuItem,
+  SidebarMenuButton,
+  SidebarInset,
+  SidebarTrigger,
+} from "@/components/ui/sidebar"
 
-// Define the structure of a Model object
+// --- Type Definitions ---
 interface Model {
   id: string
   name: string
   model_url: string
   thumbnail_url: string
   created_at: string
+  folder_id: string | null
+}
+
+interface Folder {
+  id: string
+  name: string
+  parent_id: string | null
+  created_at: string
+}
+
+interface GalleryContents {
+  folders: Folder[]
+  models: Model[]
 }
 
 // --- Data Fetching ---
 const fetcher = (url: string) => fetch(url).then((res) => res.json())
 
 // --- 3D Components ---
-
 function Loader() {
   const { progress } = useProgress()
   return (
@@ -47,78 +85,57 @@ function Loader() {
   )
 }
 
-function ModelViewer({
-  modelUrl,
-  materialMode,
-}: {
-  modelUrl: string
-  materialMode: "pbr" | "normal" | "white"
-}) {
+function ModelViewer({ modelUrl, materialMode }: { modelUrl: string; materialMode: "pbr" | "normal" | "white" }) {
   const { scene } = useGLTF(modelUrl)
-
   useEffect(() => {
     scene.traverse((child) => {
       if ((child as THREE.Mesh).isMesh) {
         const mesh = child as THREE.Mesh
-        if (materialMode === "normal") {
-          mesh.material = new THREE.MeshNormalMaterial()
-        } else if (materialMode === "white") {
-          mesh.material = new THREE.MeshStandardMaterial({ color: "white" })
-        }
-        // For 'pbr', we use the original materials from the GLTF file.
+        if (materialMode === "normal") mesh.material = new THREE.MeshNormalMaterial()
+        else if (materialMode === "white") mesh.material = new THREE.MeshStandardMaterial({ color: "white" })
       }
     })
   }, [scene, materialMode])
-
   return <primitive object={scene} />
 }
 
 // --- Main Application Component ---
-
-export default function HomePage() {
-  const { data: models, error, isLoading } = useSWR<Model[]>("/api/models", fetcher)
+function App() {
   const { mutate } = useSWRConfig()
+  const [currentFolderId, setCurrentFolderId] = useState<string | null>(null)
+  const [breadcrumbs, setBreadcrumbs] = useState<{ id: string | null; name: string }[]>([{ id: null, name: "Assets" }])
+
+  const galleryUrl = `/api/gallery?folderId=${currentFolderId || ""}`
+  const { data: gallery, error, isLoading } = useSWR<GalleryContents>(galleryUrl, fetcher)
+
   const [selectedModel, setSelectedModel] = useState<Model | null>(null)
   const [uploadingFiles, setUploadingFiles] = useState<{ name: string; progress: number }[]>([])
 
+  // Dialog states
+  const [isNewFolderDialogOpen, setIsNewFolderDialogOpen] = useState(false)
+  const [renameItem, setRenameItem] = useState<{ id: string; name: string; type: "folder" | "model" } | null>(null)
+
   // Viewer settings state
   const [materialMode, setMaterialMode] = useState<"pbr" | "normal" | "white">("pbr")
-  const [bgColor, setBgColor] = useState("#000000")
+  const [bgColor, setBgColor] = useState("#111827")
   const [lightIntensity, setLightIntensity] = useState(1)
-  const [isSidebarOpen, setIsSidebarOpen] = useState(false)
   const [isSettingsOpen, setIsSettingsOpen] = useState(false)
 
   const fileInputRef = useRef<HTMLInputElement>(null)
 
-  // --- Event Handlers ---
-
+  // --- Event Handlers & Actions ---
   const handleUpload = async (files: FileList | null) => {
     if (!files || files.length === 0) return
-
-    const newUploads = Array.from(files).map((file) => ({
-      name: file.name,
-      progress: 0,
-    }))
+    const newUploads = Array.from(files).map((file) => ({ name: file.name, progress: 0 }))
     setUploadingFiles((prev) => [...prev, ...newUploads])
 
-    for (const file of Array.from(files)) {
-      const fileType = file.name.endsWith(".glb") ? "model" : "image"
-      if (fileType !== "model") {
+    const uploadPromises = Array.from(files).map(async (file) => {
+      if (!file.name.endsWith(".glb")) {
         toast.error(`Skipping non-GLB file: ${file.name}`)
-        setUploadingFiles((prev) => prev.filter((f) => f.name !== file.name))
-        continue
+        return
       }
-
       try {
-        const newBlob = await upload(file.name, file, {
-          access: "public",
-          handleUploadUrl: "/api/upload",
-        })
-
-        // Update progress for the uploaded file
-        setUploadingFiles((prev) => prev.map((f) => (f.name === file.name ? { ...f, progress: 100 } : f)))
-
-        // Add to database
+        const newBlob = await upload(file.name, file, { access: "public", handleUploadUrl: "/api/upload" })
         const modelName = file.name.replace(/\.glb$/, "")
         await fetch("/api/models", {
           method: "POST",
@@ -127,18 +144,79 @@ export default function HomePage() {
             name: modelName,
             model_url: newBlob.url,
             thumbnail_url: `/placeholder.svg?width=400&height=400&query=${encodeURIComponent(modelName)}`,
+            folder_id: currentFolderId,
           }),
         })
-
-        toast.success(`Successfully uploaded ${file.name}`)
+        toast.success(`Uploaded ${file.name}`)
       } catch (error) {
-        console.error("Upload failed:", error)
         toast.error(`Failed to upload ${file.name}`)
-        setUploadingFiles((prev) => prev.filter((f) => f.name !== file.name))
       }
+    })
+    await Promise.all(uploadPromises)
+    mutate(galleryUrl)
+    setUploadingFiles([])
+  }
+
+  const handleCreateFolder = async (name: string) => {
+    try {
+      await fetch("/api/folders", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name, parent_id: currentFolderId }),
+      })
+      toast.success(`Folder "${name}" created`)
+      mutate(galleryUrl)
+      setIsNewFolderDialogOpen(false)
+    } catch (err) {
+      toast.error("Failed to create folder.")
     }
-    mutate("/api/models") // Re-fetch the models list
-    setUploadingFiles([]) // Clear the uploading list
+  }
+
+  const handleRename = async (newName: string) => {
+    if (!renameItem) return
+    const { id, type } = renameItem
+    const url = type === "folder" ? `/api/folders/${id}` : `/api/models/${id}`
+    try {
+      await fetch(url, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name: newName }),
+      })
+      toast.success("Renamed successfully")
+      mutate(galleryUrl)
+      if (selectedModel && type === "model" && selectedModel.id === id) {
+        setSelectedModel((prev) => prev && { ...prev, name: newName })
+      }
+      setRenameItem(null)
+    } catch (err) {
+      toast.error("Failed to rename.")
+    }
+  }
+
+  const handleDeleteItem = async (item: { id: string; type: "folder" | "model" }) => {
+    if (!window.confirm(`Are you sure you want to delete this ${item.type}?`)) return
+    const url = item.type === "folder" ? `/api/folders/${item.id}` : `/api/models/${item.id}`
+    try {
+      const res = await fetch(url, { method: "DELETE" })
+      if (!res.ok) {
+        const { error } = await res.json()
+        throw new Error(error)
+      }
+      toast.success(`${item.type.charAt(0).toUpperCase() + item.type.slice(1)} deleted`)
+      mutate(galleryUrl)
+    } catch (err) {
+      toast.error(`Failed to delete: ${(err as Error).message}`)
+    }
+  }
+
+  const handleNavigateToFolder = (folder: Folder) => {
+    setCurrentFolderId(folder.id)
+    setBreadcrumbs((prev) => [...prev, { id: folder.id, name: folder.name }])
+  }
+
+  const handleBreadcrumbClick = (folderId: string | null, index: number) => {
+    setCurrentFolderId(folderId)
+    setBreadcrumbs((prev) => prev.slice(0, index + 1))
   }
 
   const handleModelUpdate = async (id: string, updates: Partial<Omit<Model, "id" | "created_at">>) => {
@@ -149,10 +227,9 @@ export default function HomePage() {
         body: JSON.stringify(updates),
       })
       if (!res.ok) throw new Error("Failed to update model")
-
       const updatedModel = await res.json()
       setSelectedModel(updatedModel)
-      mutate("/api/models") // Revalidate the list
+      mutate(galleryUrl)
       toast.success("Model updated successfully!")
     } catch (err) {
       toast.error((err as Error).message)
@@ -163,63 +240,42 @@ export default function HomePage() {
     if (!selectedModel) return
     toast.info(`Uploading thumbnail for ${selectedModel.name}...`)
     try {
-      const newBlob = await upload(file.name, file, {
-        access: "public",
-        handleUploadUrl: "/api/upload",
-      })
-      await handleModelUpdate(selectedModel.id, {
-        thumbnail_url: newBlob.url,
-      })
+      const newBlob = await upload(file.name, file, { access: "public", handleUploadUrl: "/api/upload" })
+      await handleModelUpdate(selectedModel.id, { thumbnail_url: newBlob.url })
     } catch (err) {
       toast.error("Failed to upload thumbnail.")
     }
   }
 
-  const handleDelete = async () => {
-    if (!selectedModel) return
-    try {
-      await fetch(`/api/models/${selectedModel.id}`, { method: "DELETE" })
-      toast.success(`Deleted ${selectedModel.name}`)
-      setSelectedModel(null)
-      mutate("/api/models")
-    } catch (err) {
-      toast.error("Failed to delete model.")
-    }
-  }
-
-  // --- Keyboard Navigation ---
   const handleKeyDown = useCallback(
     (event: KeyboardEvent) => {
-      if (!selectedModel) return
+      if (!selectedModel || !gallery || !gallery.models || gallery.models.length === 0) return
 
-      const currentIndex = models?.findIndex((m) => m.id === selectedModel.id)
-      if (currentIndex === undefined || currentIndex === -1 || !models) return
+      const currentIndex = gallery.models.findIndex((m) => m.id === selectedModel.id)
+      if (currentIndex === -1) return
 
       if (event.key === "Escape") {
         setSelectedModel(null)
       } else if (event.key === "ArrowRight") {
-        const nextIndex = (currentIndex + 1) % models.length
-        setSelectedModel(models[nextIndex])
+        const nextIndex = (currentIndex + 1) % gallery.models.length
+        setSelectedModel(gallery.models[nextIndex])
       } else if (event.key === "ArrowLeft") {
-        const prevIndex = (currentIndex - 1 + models.length) % models.length
-        setSelectedModel(models[prevIndex])
+        const prevIndex = (currentIndex - 1 + gallery.models.length) % gallery.models.length
+        setSelectedModel(gallery.models[prevIndex])
       }
     },
-    [selectedModel, models],
+    [selectedModel, gallery],
   )
 
   useEffect(() => {
     window.addEventListener("keydown", handleKeyDown)
-    return () => {
-      window.removeEventListener("keydown", handleKeyDown)
-    }
+    return () => window.removeEventListener("keydown", handleKeyDown)
   }, [handleKeyDown])
 
   // --- Render Logic ---
-
   if (selectedModel) {
     return (
-      <div className="w-full h-screen bg-black relative">
+      <div className="w-full h-screen relative" style={{ backgroundColor: bgColor }}>
         <Toaster richColors />
         <Canvas camera={{ fov: 50, position: [0, 1, 5] }}>
           <Suspense fallback={<Loader />}>
@@ -230,24 +286,20 @@ export default function HomePage() {
           </Suspense>
           <OrbitControls enablePan={true} enableZoom={true} enableRotate={true} />
         </Canvas>
-
-        {/* Top Left Controls */}
         <div className="absolute top-4 left-4">
           <Button
             variant="ghost"
             size="icon"
             onClick={() => setSelectedModel(null)}
-            className="text-white hover:bg-gray-700 hover:text-white"
+            className="text-white hover:bg-white/20"
           >
             <ChevronLeft className="h-6 w-6" />
           </Button>
         </div>
-
-        {/* Top Right Controls (Settings) */}
         <div className="absolute top-4 right-4">
           <Sheet open={isSettingsOpen} onOpenChange={setIsSettingsOpen}>
             <SheetTrigger asChild>
-              <Button variant="ghost" size="icon" className="text-white hover:bg-gray-700 hover:text-white">
+              <Button variant="ghost" size="icon" className="text-white hover:bg-white/20">
                 <Settings className="h-6 w-6" />
               </Button>
             </SheetTrigger>
@@ -255,7 +307,9 @@ export default function HomePage() {
               <SettingsPanel
                 model={selectedModel}
                 onUpdate={handleModelUpdate}
-                onDelete={handleDelete}
+                onDelete={() =>
+                  handleDeleteItem({ id: selectedModel.id, type: "model" }).then(() => setSelectedModel(null))
+                }
                 onThumbnailUpload={handleThumbnailUpload}
                 lightIntensity={lightIntensity}
                 onLightIntensityChange={setLightIntensity}
@@ -265,9 +319,7 @@ export default function HomePage() {
             </SheetContent>
           </Sheet>
         </div>
-
-        {/* Bottom Controls */}
-        <div className="absolute bottom-4 left-1/2 -translate-x-1/2 bg-gray-800/50 backdrop-blur-sm p-2 rounded-full flex items-center gap-2">
+        <div className="absolute bottom-4 left-1/2 -translate-x-1/2 bg-black/50 backdrop-blur-sm p-2 rounded-full flex items-center gap-2">
           <Button
             variant={materialMode === "pbr" ? "secondary" : "ghost"}
             size="icon"
@@ -298,7 +350,7 @@ export default function HomePage() {
   }
 
   return (
-    <div className="bg-gray-900 text-white min-h-screen flex">
+    <div className="bg-background text-foreground">
       <Toaster richColors />
       <input
         type="file"
@@ -308,95 +360,238 @@ export default function HomePage() {
         multiple
         accept=".glb"
       />
-
-      {/* Sidebar */}
-      <aside
-        className={cn(
-          "bg-gray-950 p-4 flex-col md:flex md:w-64 transition-all duration-300 ease-in-out",
-          isSidebarOpen ? "flex w-64" : "hidden",
-        )}
-      >
-        <div className="mb-8">
-          <h1 className="text-2xl font-bold">My Models</h1>
-        </div>
-        <nav className="flex flex-col gap-2">
-          <Button variant="ghost" className="justify-start gap-2" onClick={() => fileInputRef.current?.click()}>
-            <Upload className="h-5 w-5" /> Upload
-          </Button>
-          <Button variant="secondary" className="justify-start gap-2">
-            <Folder className="h-5 w-5" /> Assets
-          </Button>
-        </nav>
-      </aside>
-
-      {/* Main Content */}
-      <main className="flex-1 p-4 md:p-8 overflow-y-auto">
-        <div className="md:hidden mb-4 flex items-center justify-between">
-          <Button variant="ghost" size="icon" onClick={() => setIsSidebarOpen(!isSidebarOpen)}>
-            {isSidebarOpen ? <X /> : <Menu />}
-          </Button>
-          <h1 className="text-xl font-bold">My Models</h1>
-        </div>
-
-        {isLoading && (
-          <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-4">
-            {Array.from({ length: 12 }).map((_, i) => (
-              <Skeleton key={i} className="aspect-square rounded-lg bg-gray-800" />
-            ))}
-          </div>
-        )}
-
-        {error && <div className="text-center text-red-400">Failed to load models.</div>}
-
-        {!isLoading && models?.length === 0 && (
-          <div className="text-center text-gray-400 flex flex-col items-center justify-center h-full">
-            <Folder size={64} className="mb-4" />
-            <h2 className="text-2xl font-semibold">Your gallery is empty</h2>
-            <p className="mt-2">Click the upload button to add your first model.</p>
-            <Button className="mt-4" onClick={() => fileInputRef.current?.click()}>
-              <Upload className="mr-2 h-4 w-4" /> Upload Model
-            </Button>
-          </div>
-        )}
-
-        <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-4">
-          {uploadingFiles.map((file) => (
-            <div
-              key={file.name}
-              className="aspect-square rounded-lg bg-gray-800 flex flex-col items-center justify-center p-2"
-            >
-              <div className="w-full bg-gray-700 rounded-full h-2.5 mb-2">
-                <div className="bg-blue-600 h-2.5 rounded-full" style={{ width: `${file.progress}%` }}></div>
-              </div>
-              <p className="text-xs text-center truncate w-full">{file.name}</p>
+      <SidebarProvider defaultOpen>
+        <Sidebar collapsible="icon">
+          <SidebarHeader>
+            <div className="flex items-center gap-2 group-data-[collapsible=icon]:justify-center">
+              <Cuboid className="size-6 text-primary" />
+              <h1 className="font-semibold text-lg group-data-[collapsible=icon]:hidden">My Models</h1>
             </div>
-          ))}
-          {models?.map((model) => (
-            <div
-              key={model.id}
-              className="group relative aspect-square rounded-lg overflow-hidden cursor-pointer"
-              onClick={() => setSelectedModel(model)}
-            >
-              <img
-                src={model.thumbnail_url || "/placeholder.svg"}
-                alt={model.name}
-                className="w-full h-full object-cover transition-transform duration-300 group-hover:scale-110"
-                onError={(e) => {
-                  ;(e.target as HTMLImageElement).src = `/placeholder.svg?width=400&height=400&query=error`
-                }}
-              />
-              <div className="absolute inset-0 bg-black/50 opacity-0 group-hover:opacity-100 transition-opacity duration-300 flex items-end p-2">
-                <p className="text-sm font-semibold truncate">{model.name}</p>
+          </SidebarHeader>
+          <SidebarContent>
+            <SidebarMenu>
+              <SidebarMenuItem>
+                <SidebarMenuButton onClick={() => fileInputRef.current?.click()} tooltip="Upload Models">
+                  <Upload />
+                  <span>Upload</span>
+                </SidebarMenuButton>
+              </SidebarMenuItem>
+              <SidebarMenuItem>
+                <SidebarMenuButton onClick={() => setIsNewFolderDialogOpen(true)} tooltip="New Folder">
+                  <FolderPlus />
+                  <span>New Folder</span>
+                </SidebarMenuButton>
+              </SidebarMenuItem>
+            </SidebarMenu>
+          </SidebarContent>
+        </Sidebar>
+        <SidebarInset>
+          <header className="flex items-center justify-between p-4 border-b">
+            <div className="flex items-center gap-2">
+              <SidebarTrigger />
+              <div className="flex items-center text-sm">
+                {breadcrumbs.map((crumb, index) => (
+                  <Fragment key={crumb.id || "root"}>
+                    <button
+                      onClick={() => handleBreadcrumbClick(crumb.id, index)}
+                      className="hover:underline disabled:hover:no-underline disabled:text-foreground"
+                      disabled={index === breadcrumbs.length - 1}
+                    >
+                      {crumb.name}
+                    </button>
+                    {index < breadcrumbs.length - 1 && <ChevronRight className="h-4 w-4 mx-1 text-muted-foreground" />}
+                  </Fragment>
+                ))}
               </div>
             </div>
-          ))}
-        </div>
-      </main>
+          </header>
+          <main className="flex-1 p-4 md:p-8 overflow-y-auto">
+            {isLoading && (
+              <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-4">
+                {Array.from({ length: 18 }).map((_, i) => (
+                  <Skeleton key={i} className="aspect-square rounded-lg bg-muted" />
+                ))}
+              </div>
+            )}
+            {error && <div className="text-center text-destructive">Failed to load gallery.</div>}
+            {!isLoading &&
+              gallery &&
+              Array.isArray(gallery.folders) &&
+              Array.isArray(gallery.models) &&
+              gallery.folders.length === 0 &&
+              gallery.models.length === 0 &&
+              uploadingFiles.length === 0 && (
+                <div className="text-center text-muted-foreground flex flex-col items-center justify-center h-full pt-20">
+                  <FolderIcon size={64} className="mb-4" />
+                  <h2 className="text-2xl font-semibold">This folder is empty</h2>
+                  <p className="mt-2">Upload a model or create a new folder.</p>
+                </div>
+              )}
+            <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-4">
+              {uploadingFiles.map((file) => (
+                <div
+                  key={file.name}
+                  className="aspect-square rounded-lg bg-muted flex flex-col items-center justify-center p-2"
+                >
+                  <div className="w-full bg-secondary rounded-full h-2.5 mb-2">
+                    <div className="bg-primary h-2.5 rounded-full" style={{ width: `${file.progress}%` }}></div>
+                  </div>
+                  <p className="text-xs text-center truncate w-full">{file.name}</p>
+                </div>
+              ))}
+              {gallery?.folders.map((folder) => (
+                <ItemContextMenu
+                  key={folder.id}
+                  onRename={() => setRenameItem({ ...folder, type: "folder" })}
+                  onDelete={() => handleDeleteItem({ id: folder.id, type: "folder" })}
+                >
+                  <div
+                    onDoubleClick={() => handleNavigateToFolder(folder)}
+                    className="group relative aspect-square rounded-lg overflow-hidden cursor-pointer flex flex-col items-center justify-center bg-muted hover:bg-secondary transition-colors"
+                  >
+                    <FolderIcon className="w-1/3 h-1/3 text-foreground/50" />
+                    <p className="text-sm font-semibold truncate mt-2 text-center w-full px-2">{folder.name}</p>
+                  </div>
+                </ItemContextMenu>
+              ))}
+              {gallery?.models.map((model) => (
+                <ItemContextMenu
+                  key={model.id}
+                  onRename={() => setRenameItem({ ...model, type: "model" })}
+                  onDelete={() => handleDeleteItem({ id: model.id, type: "model" })}
+                >
+                  <div
+                    onClick={() => setSelectedModel(model)}
+                    className="group relative aspect-square rounded-lg overflow-hidden cursor-pointer"
+                  >
+                    <img
+                      src={model.thumbnail_url || "/placeholder.svg"}
+                      alt={model.name}
+                      className="w-full h-full object-cover transition-transform duration-300 group-hover:scale-110 bg-muted"
+                      onError={(e) => {
+                        ;(e.target as HTMLImageElement).src = `/placeholder.svg?width=400&height=400&query=error`
+                      }}
+                    />
+                    <div className="absolute inset-0 bg-black/60 opacity-0 group-hover:opacity-100 transition-opacity duration-300 flex items-end p-2">
+                      <p className="text-sm font-semibold truncate text-white">{model.name}</p>
+                    </div>
+                  </div>
+                </ItemContextMenu>
+              ))}
+            </div>
+          </main>
+        </SidebarInset>
+      </SidebarProvider>
+      <NewFolderDialog
+        open={isNewFolderDialogOpen}
+        onOpenChange={setIsNewFolderDialogOpen}
+        onCreate={handleCreateFolder}
+      />
+      {renameItem && (
+        <RenameDialog item={renameItem} onOpenChange={() => setRenameItem(null)} onRename={handleRename} />
+      )}
     </div>
   )
 }
 
-// --- Settings Panel Component ---
+export default function HomePage() {
+  return <App />
+}
+
+// --- UI Components ---
+function ItemContextMenu({
+  children,
+  onRename,
+  onDelete,
+}: { children: React.ReactNode; onRename: () => void; onDelete: () => void }) {
+  return (
+    <DropdownMenu>
+      <DropdownMenuTrigger asChild>
+        <div className="relative">
+          {children}
+          <div className="absolute top-2 right-2">
+            <Button
+              variant="ghost"
+              size="icon"
+              className="h-7 w-7 opacity-0 group-hover:opacity-100 focus-visible:opacity-100 bg-black/30 hover:bg-black/50 text-white hover:text-white"
+            >
+              <MoreVertical className="h-4 w-4" />
+            </Button>
+          </div>
+        </div>
+      </DropdownMenuTrigger>
+      <DropdownMenuContent>
+        <DropdownMenuItem onSelect={onRename}>
+          <Pencil className="mr-2 h-4 w-4" />
+          <span>Rename</span>
+        </DropdownMenuItem>
+        <DropdownMenuItem onSelect={onDelete} className="text-destructive focus:text-destructive">
+          <Trash2 className="mr-2 h-4 w-4" />
+          <span>Delete</span>
+        </DropdownMenuItem>
+      </DropdownMenuContent>
+    </DropdownMenu>
+  )
+}
+
+function NewFolderDialog({
+  open,
+  onOpenChange,
+  onCreate,
+}: { open: boolean; onOpenChange: (open: boolean) => void; onCreate: (name: string) => void }) {
+  const [name, setName] = useState("")
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent>
+        <DialogHeader>
+          <DialogTitle>New Folder</DialogTitle>
+        </DialogHeader>
+        <Input
+          value={name}
+          onChange={(e) => setName(e.target.value)}
+          placeholder="Enter folder name"
+          onKeyDown={(e) => e.key === "Enter" && name && onCreate(name)}
+        />
+        <DialogFooter>
+          <Button onClick={() => name && onCreate(name)} disabled={!name}>
+            Create
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  )
+}
+
+function RenameDialog({
+  item,
+  onOpenChange,
+  onRename,
+}: {
+  item: { id: string; name: string; type: string }
+  onOpenChange: (open: boolean) => void
+  onRename: (name: string) => void
+}) {
+  const [name, setName] = useState(item.name)
+  return (
+    <Dialog open={true} onOpenChange={onOpenChange}>
+      <DialogContent>
+        <DialogHeader>
+          <DialogTitle>Rename {item.type}</DialogTitle>
+        </DialogHeader>
+        <Input
+          value={name}
+          onChange={(e) => setName(e.target.value)}
+          onKeyDown={(e) => e.key === "Enter" && name && onRename(name)}
+        />
+        <DialogFooter>
+          <Button onClick={() => name && onRename(name)} disabled={!name}>
+            Save
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  )
+}
 
 function SettingsPanel({
   model,
@@ -420,25 +615,20 @@ function SettingsPanel({
   const [name, setName] = useState(model.name)
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false)
   const thumbnailInputRef = useRef<HTMLInputElement>(null)
-
   useEffect(() => {
     setName(model.name)
   }, [model.name])
-
   const handleNameBlur = () => {
-    if (name !== model.name) {
-      onUpdate(model.id, { name })
-    }
+    if (name !== model.name) onUpdate(model.id, { name })
   }
 
   return (
     <div className="p-4 flex flex-col h-full">
       <h2 className="text-2xl font-bold mb-6">Settings</h2>
-
-      <div className="space-y-6 flex-1">
+      <div className="space-y-6 flex-1 overflow-y-auto pr-2">
         <div>
           <label className="text-sm font-medium text-gray-400">Thumbnail</label>
-          <div className="mt-2 relative aspect-square w-full rounded-lg overflow-hidden group">
+          <div className="mt-2 relative aspect-video w-full rounded-lg overflow-hidden group bg-gray-800">
             <img
               src={model.thumbnail_url || "/placeholder.svg"}
               alt={model.name}
@@ -461,7 +651,6 @@ function SettingsPanel({
             />
           </div>
         </div>
-
         <div>
           <label htmlFor="model-name" className="text-sm font-medium text-gray-400">
             Model Name
@@ -472,13 +661,12 @@ function SettingsPanel({
               value={name}
               onChange={(e) => setName(e.target.value)}
               onBlur={handleNameBlur}
-              onKeyDown={(e) => e.key === "Enter" && handleNameBlur()}
+              onKeyDown={(e) => e.key === "Enter" && (e.target as HTMLInputElement).blur()}
               className="bg-gray-800 border-gray-700 text-white pr-8"
             />
-            <Pencil className="absolute right-2 top-1/2 -translate-y-1/2 h-4 w-4 text-gray-500" />
+            <Pencil className="absolute right-2.5 top-1/2 -translate-y-1/2 h-4 w-4 text-gray-500" />
           </div>
         </div>
-
         <div>
           <label className="text-sm font-medium text-gray-400">Light Intensity</label>
           <Slider
@@ -490,7 +678,6 @@ function SettingsPanel({
             className="mt-2"
           />
         </div>
-
         <div>
           <label className="text-sm font-medium text-gray-400">Background Color</label>
           <Input
@@ -501,15 +688,13 @@ function SettingsPanel({
           />
         </div>
       </div>
-
-      <div className="mt-6">
+      <div className="mt-6 pt-6 border-t border-gray-700">
         <Button variant="destructive" className="w-full" onClick={() => setShowDeleteConfirm(true)}>
           <Trash2 className="mr-2 h-4 w-4" /> Delete Model
         </Button>
       </div>
-
       <Dialog open={showDeleteConfirm} onOpenChange={setShowDeleteConfirm}>
-        <DialogContent className="bg-gray-900 text-white">
+        <DialogContent className="bg-gray-900 text-white border-gray-700">
           <DialogHeader>
             <DialogTitle>Are you sure?</DialogTitle>
             <DialogDescription className="text-gray-400">
