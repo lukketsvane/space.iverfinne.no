@@ -1,5 +1,7 @@
 "use client"
 
+import { ContextMenu, ContextMenuContent, ContextMenuItem, ContextMenuTrigger } from "@/components/ui/context-menu"
+
 import type React from "react"
 
 import { useState, useRef, useEffect, Suspense, useCallback, Fragment } from "react"
@@ -14,10 +16,11 @@ import {
   Settings,
   ImageIcon,
   Pencil,
-  Cuboid,
   MoreVertical,
   FolderPlus,
   ChevronRight,
+  Download,
+  Grid,
 } from "lucide-react"
 import { upload } from "@vercel/blob/client"
 import useSWR, { useSWRConfig } from "swr"
@@ -49,6 +52,7 @@ import {
   SidebarInset,
   SidebarTrigger,
 } from "@/components/ui/sidebar"
+import { Separator } from "@/components/ui/separator"
 
 // --- Type Definitions ---
 interface Model {
@@ -117,7 +121,7 @@ function App() {
 
   // Viewer settings state
   const [materialMode, setMaterialMode] = useState<"pbr" | "normal" | "white">("pbr")
-  const [bgColor, setBgColor] = useState("#111827")
+  const [bgColor, setBgColor] = useState("#000000")
   const [lightIntensity, setLightIntensity] = useState(1)
   const [isSettingsOpen, setIsSettingsOpen] = useState(false)
 
@@ -247,6 +251,17 @@ function App() {
     }
   }
 
+  const handleDownloadModel = () => {
+    if (!selectedModel) return
+    const link = document.createElement("a")
+    link.href = selectedModel.model_url
+    link.download = `${selectedModel.name}.glb`
+    document.body.appendChild(link)
+    link.click()
+    document.body.removeChild(link)
+    toast.success(`Downloading ${selectedModel.name}.glb`)
+  }
+
   const handleKeyDown = useCallback(
     (event: KeyboardEvent) => {
       if (!selectedModel || !gallery || !gallery.models || gallery.models.length === 0) return
@@ -303,7 +318,7 @@ function App() {
                 <Settings className="h-6 w-6" />
               </Button>
             </SheetTrigger>
-            <SheetContent className="bg-gray-900 text-white border-l-gray-700 w-[350px] sm:w-[400px]">
+            <SheetContent className="bg-black/50 backdrop-blur-sm border-white/20 w-[350px] sm:w-[400px]">
               <SettingsPanel
                 model={selectedModel}
                 onUpdate={handleModelUpdate}
@@ -319,7 +334,7 @@ function App() {
             </SheetContent>
           </Sheet>
         </div>
-        <div className="absolute bottom-4 left-1/2 -translate-x-1/2 bg-black/50 backdrop-blur-sm p-2 rounded-full flex items-center gap-2">
+        <div className="absolute bottom-4 left-1/2 -translate-x-1/2 bg-black/50 backdrop-blur-sm p-2 rounded-full flex items-center gap-1">
           <Button
             variant={materialMode === "pbr" ? "secondary" : "ghost"}
             size="icon"
@@ -344,6 +359,10 @@ function App() {
           >
             <div className="w-6 h-6 rounded-full bg-white" />
           </Button>
+          <Separator orientation="vertical" className="h-6 bg-white/20 mx-1" />
+          <Button variant="ghost" size="icon" onClick={handleDownloadModel} className="text-white rounded-full">
+            <Download />
+          </Button>
         </div>
       </div>
     )
@@ -361,10 +380,10 @@ function App() {
         accept=".glb"
       />
       <SidebarProvider defaultOpen>
-        <Sidebar collapsible="icon">
+        <Sidebar collapsible="icon" variant="floating">
           <SidebarHeader>
             <div className="flex items-center gap-2 group-data-[collapsible=icon]:justify-center">
-              <Cuboid className="size-6 text-primary" />
+              <SidebarTrigger />
               <h1 className="font-semibold text-lg group-data-[collapsible=icon]:hidden">My Models</h1>
             </div>
           </SidebarHeader>
@@ -374,6 +393,16 @@ function App() {
                 <SidebarMenuButton onClick={() => fileInputRef.current?.click()} tooltip="Upload Models">
                   <Upload />
                   <span>Upload</span>
+                </SidebarMenuButton>
+              </SidebarMenuItem>
+              <SidebarMenuItem>
+                <SidebarMenuButton
+                  onClick={() => handleBreadcrumbClick(null, 0)}
+                  isActive={currentFolderId === null}
+                  tooltip="Assets"
+                >
+                  <Grid />
+                  <span>Assets</span>
                 </SidebarMenuButton>
               </SidebarMenuItem>
               <SidebarMenuItem>
@@ -388,7 +417,6 @@ function App() {
         <SidebarInset>
           <header className="flex items-center justify-between p-4 border-b">
             <div className="flex items-center gap-2">
-              <SidebarTrigger />
               <div className="flex items-center text-sm">
                 {breadcrumbs.map((crumb, index) => (
                   <Fragment key={crumb.id || "root"}>
@@ -467,7 +495,7 @@ function App() {
                     <img
                       src={model.thumbnail_url || "/placeholder.svg"}
                       alt={model.name}
-                      className="w-full h-full object-cover transition-transform duration-300 group-hover:scale-110 bg-muted"
+                      className="w-full h-full object-contain transition-transform duration-300 group-hover:scale-110 bg-muted"
                       onError={(e) => {
                         ;(e.target as HTMLImageElement).src = `/placeholder.svg?width=400&height=400&query=error`
                       }}
@@ -503,34 +531,53 @@ function ItemContextMenu({
   children,
   onRename,
   onDelete,
-}: { children: React.ReactNode; onRename: () => void; onDelete: () => void }) {
+}: {
+  children: React.ReactNode
+  onRename: () => void
+  onDelete: () => void
+}) {
   return (
-    <DropdownMenu>
-      <DropdownMenuTrigger asChild>
-        <div className="relative">
+    <ContextMenu>
+      <ContextMenuTrigger className="w-full h-full">
+        <div className="relative group w-full h-full">
           {children}
           <div className="absolute top-2 right-2">
-            <Button
-              variant="ghost"
-              size="icon"
-              className="h-7 w-7 opacity-0 group-hover:opacity-100 focus-visible:opacity-100 bg-black/30 hover:bg-black/50 text-white hover:text-white"
-            >
-              <MoreVertical className="h-4 w-4" />
-            </Button>
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  className="h-7 w-7 opacity-0 group-hover:opacity-100 focus-visible:opacity-100 bg-black/30 hover:bg-black/50 text-white hover:text-white"
+                  onContextMenu={(e) => e.stopPropagation()}
+                >
+                  <MoreVertical className="h-4 w-4" />
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent>
+                <DropdownMenuItem onSelect={onRename}>
+                  <Pencil className="mr-2 h-4 w-4" />
+                  <span>Rename</span>
+                </DropdownMenuItem>
+                <DropdownMenuItem onSelect={onDelete} className="text-destructive focus:text-destructive">
+                  <Trash2 className="mr-2 h-4 w-4" />
+                  <span>Delete</span>
+                </DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
           </div>
         </div>
-      </DropdownMenuTrigger>
-      <DropdownMenuContent>
-        <DropdownMenuItem onSelect={onRename}>
+      </ContextMenuTrigger>
+      <ContextMenuContent>
+        <ContextMenuItem onSelect={onRename}>
           <Pencil className="mr-2 h-4 w-4" />
           <span>Rename</span>
-        </DropdownMenuItem>
-        <DropdownMenuItem onSelect={onDelete} className="text-destructive focus:text-destructive">
+        </ContextMenuItem>
+        <ContextMenuItem onSelect={onDelete} className="text-destructive focus:text-destructive">
           <Trash2 className="mr-2 h-4 w-4" />
           <span>Delete</span>
-        </DropdownMenuItem>
-      </DropdownMenuContent>
-    </DropdownMenu>
+        </ContextMenuItem>
+      </ContextMenuContent>
+    </ContextMenu>
   )
 }
 
@@ -542,7 +589,7 @@ function NewFolderDialog({
   const [name, setName] = useState("")
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent>
+      <DialogContent className="bg-black/50 backdrop-blur-sm border-white/20 text-white">
         <DialogHeader>
           <DialogTitle>New Folder</DialogTitle>
         </DialogHeader>
@@ -551,6 +598,7 @@ function NewFolderDialog({
           onChange={(e) => setName(e.target.value)}
           placeholder="Enter folder name"
           onKeyDown={(e) => e.key === "Enter" && name && onCreate(name)}
+          className="bg-white/10 border-white/20"
         />
         <DialogFooter>
           <Button onClick={() => name && onCreate(name)} disabled={!name}>
@@ -574,7 +622,7 @@ function RenameDialog({
   const [name, setName] = useState(item.name)
   return (
     <Dialog open={true} onOpenChange={onOpenChange}>
-      <DialogContent>
+      <DialogContent className="bg-black/50 backdrop-blur-sm border-white/20 text-white">
         <DialogHeader>
           <DialogTitle>Rename {item.type}</DialogTitle>
         </DialogHeader>
@@ -582,6 +630,7 @@ function RenameDialog({
           value={name}
           onChange={(e) => setName(e.target.value)}
           onKeyDown={(e) => e.key === "Enter" && name && onRename(name)}
+          className="bg-white/10 border-white/20"
         />
         <DialogFooter>
           <Button onClick={() => name && onRename(name)} disabled={!name}>
@@ -623,12 +672,12 @@ function SettingsPanel({
   }
 
   return (
-    <div className="p-4 flex flex-col h-full">
+    <div className="p-4 flex flex-col h-full text-white">
       <h2 className="text-2xl font-bold mb-6">Settings</h2>
       <div className="space-y-6 flex-1 overflow-y-auto pr-2">
         <div>
           <label className="text-sm font-medium text-gray-400">Thumbnail</label>
-          <div className="mt-2 relative aspect-video w-full rounded-lg overflow-hidden group bg-gray-800">
+          <div className="mt-2 relative aspect-video w-full rounded-lg overflow-hidden group bg-white/10">
             <img
               src={model.thumbnail_url || "/placeholder.svg"}
               alt={model.name}
@@ -662,7 +711,7 @@ function SettingsPanel({
               onChange={(e) => setName(e.target.value)}
               onBlur={handleNameBlur}
               onKeyDown={(e) => e.key === "Enter" && (e.target as HTMLInputElement).blur()}
-              className="bg-gray-800 border-gray-700 text-white pr-8"
+              className="bg-white/10 border-white/20 text-white pr-8"
             />
             <Pencil className="absolute right-2.5 top-1/2 -translate-y-1/2 h-4 w-4 text-gray-500" />
           </div>
@@ -684,17 +733,17 @@ function SettingsPanel({
             type="color"
             value={bgColor}
             onChange={(e) => onBgColorChange(e.target.value)}
-            className="w-full h-10 p-1 mt-2 bg-gray-800 border-gray-700"
+            className="w-full h-10 p-1 mt-2 bg-white/10 border-white/20"
           />
         </div>
       </div>
-      <div className="mt-6 pt-6 border-t border-gray-700">
+      <div className="mt-6 pt-6 border-t border-white/20">
         <Button variant="destructive" className="w-full" onClick={() => setShowDeleteConfirm(true)}>
           <Trash2 className="mr-2 h-4 w-4" /> Delete Model
         </Button>
       </div>
       <Dialog open={showDeleteConfirm} onOpenChange={setShowDeleteConfirm}>
-        <DialogContent className="bg-gray-900 text-white border-gray-700">
+        <DialogContent className="bg-black/50 backdrop-blur-sm border-white/20 text-white">
           <DialogHeader>
             <DialogTitle>Are you sure?</DialogTitle>
             <DialogDescription className="text-gray-400">
