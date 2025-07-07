@@ -124,6 +124,7 @@ function App() {
   const [bgColor, setBgColor] = useState("#000000")
   const [lightIntensity, setLightIntensity] = useState(1)
   const [isSettingsOpen, setIsSettingsOpen] = useState(false)
+  const [isDragging, setIsDragging] = useState(false)
 
   const fileInputRef = useRef<HTMLInputElement>(null)
 
@@ -287,6 +288,32 @@ function App() {
     return () => window.removeEventListener("keydown", handleKeyDown)
   }, [handleKeyDown])
 
+  const handleDragEnter = (e: React.DragEvent<HTMLElement>) => {
+    e.preventDefault()
+    e.stopPropagation()
+    setIsDragging(true)
+  }
+
+  const handleDragLeave = (e: React.DragEvent<HTMLElement>) => {
+    e.preventDefault()
+    e.stopPropagation()
+    setIsDragging(false)
+  }
+
+  const handleDragOver = (e: React.DragEvent<HTMLElement>) => {
+    e.preventDefault()
+    e.stopPropagation()
+  }
+
+  const handleDrop = (e: React.DragEvent<HTMLElement>) => {
+    e.preventDefault()
+    e.stopPropagation()
+    setIsDragging(false)
+    if (e.dataTransfer.files && e.dataTransfer.files.length > 0) {
+      handleUpload(e.dataTransfer.files)
+    }
+  }
+
   // --- Render Logic ---
   if (selectedModel) {
     return (
@@ -433,7 +460,21 @@ function App() {
               </div>
             </div>
           </header>
-          <main className="flex-1 p-4 md:p-8 overflow-y-auto">
+          <main
+            className="relative flex-1 p-4 md:p-8 overflow-y-auto"
+            onDragEnter={handleDragEnter}
+            onDragLeave={handleDragLeave}
+            onDragOver={handleDragOver}
+            onDrop={handleDrop}
+          >
+            {isDragging && (
+              <div className="absolute inset-4 bg-primary/10 border-2 border-dashed border-primary rounded-lg flex items-center justify-center z-10 pointer-events-none">
+                <div className="text-center">
+                  <Upload size={48} className="mx-auto text-primary" />
+                  <p className="mt-2 font-semibold text-primary">Drop files to upload</p>
+                </div>
+              </div>
+            )}
             {isLoading && (
               <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-4">
                 {Array.from({ length: 18 }).map((_, i) => (
@@ -445,14 +486,14 @@ function App() {
             {!isLoading &&
               gallery &&
               Array.isArray(gallery.folders) &&
-              Array.isArray(gallery.models) &&
               gallery.folders.length === 0 &&
+              Array.isArray(gallery.models) &&
               gallery.models.length === 0 &&
               uploadingFiles.length === 0 && (
                 <div className="text-center text-muted-foreground flex flex-col items-center justify-center h-full pt-20">
                   <FolderIcon size={64} className="mb-4" />
                   <h2 className="text-2xl font-semibold">This folder is empty</h2>
-                  <p className="mt-2">Upload a model or create a new folder.</p>
+                  <p className="mt-2">Drag and drop files here or use the upload button.</p>
                 </div>
               )}
             <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-4">
@@ -467,45 +508,49 @@ function App() {
                   <p className="text-xs text-center truncate w-full">{file.name}</p>
                 </div>
               ))}
-              {gallery?.folders.map((folder) => (
-                <ItemContextMenu
-                  key={folder.id}
-                  onRename={() => setRenameItem({ ...folder, type: "folder" })}
-                  onDelete={() => handleDeleteItem({ id: folder.id, type: "folder" })}
-                >
-                  <div
-                    onDoubleClick={() => handleNavigateToFolder(folder)}
-                    className="group relative aspect-square rounded-lg overflow-hidden cursor-pointer flex flex-col items-center justify-center bg-muted hover:bg-secondary transition-colors"
+              {gallery &&
+                Array.isArray(gallery.folders) &&
+                gallery.folders.map((folder) => (
+                  <ItemContextMenu
+                    key={folder.id}
+                    onRename={() => setRenameItem({ ...folder, type: "folder" })}
+                    onDelete={() => handleDeleteItem({ id: folder.id, type: "folder" })}
                   >
-                    <FolderIcon className="w-1/3 h-1/3 text-foreground/50" />
-                    <p className="text-sm font-semibold truncate mt-2 text-center w-full px-2">{folder.name}</p>
-                  </div>
-                </ItemContextMenu>
-              ))}
-              {gallery?.models.map((model) => (
-                <ItemContextMenu
-                  key={model.id}
-                  onRename={() => setRenameItem({ ...model, type: "model" })}
-                  onDelete={() => handleDeleteItem({ id: model.id, type: "model" })}
-                >
-                  <div
-                    onClick={() => setSelectedModel(model)}
-                    className="group relative aspect-square rounded-lg overflow-hidden cursor-pointer"
-                  >
-                    <img
-                      src={model.thumbnail_url || "/placeholder.svg"}
-                      alt={model.name}
-                      className="w-full h-full object-contain transition-transform duration-300 group-hover:scale-110 bg-muted"
-                      onError={(e) => {
-                        ;(e.target as HTMLImageElement).src = `/placeholder.svg?width=400&height=400&query=error`
-                      }}
-                    />
-                    <div className="absolute inset-0 bg-black/60 opacity-0 group-hover:opacity-100 transition-opacity duration-300 flex items-end p-2">
-                      <p className="text-sm font-semibold truncate text-white">{model.name}</p>
+                    <div
+                      onDoubleClick={() => handleNavigateToFolder(folder)}
+                      className="group relative aspect-square rounded-lg overflow-hidden cursor-pointer flex flex-col items-center justify-center bg-muted hover:bg-secondary transition-colors"
+                    >
+                      <FolderIcon className="w-1/3 h-1/3 text-foreground/50" />
+                      <p className="text-sm font-semibold truncate mt-2 text-center w-full px-2">{folder.name}</p>
                     </div>
-                  </div>
-                </ItemContextMenu>
-              ))}
+                  </ItemContextMenu>
+                ))}
+              {gallery &&
+                Array.isArray(gallery.models) &&
+                gallery.models.map((model) => (
+                  <ItemContextMenu
+                    key={model.id}
+                    onRename={() => setRenameItem({ ...model, type: "model" })}
+                    onDelete={() => handleDeleteItem({ id: model.id, type: "model" })}
+                  >
+                    <div
+                      onClick={() => setSelectedModel(model)}
+                      className="group relative aspect-square rounded-lg overflow-hidden cursor-pointer"
+                    >
+                      <img
+                        src={model.thumbnail_url || "/placeholder.svg"}
+                        alt={model.name}
+                        className="w-full h-full object-contain transition-transform duration-300 group-hover:scale-110 bg-muted"
+                        onError={(e) => {
+                          ;(e.target as HTMLImageElement).src = `/placeholder.svg?width=400&height=400&query=error`
+                        }}
+                      />
+                      <div className="absolute inset-0 bg-black/60 opacity-0 group-hover:opacity-100 transition-opacity duration-300 flex items-end p-2">
+                        <p className="text-sm font-semibold truncate text-white">{model.name}</p>
+                      </div>
+                    </div>
+                  </ItemContextMenu>
+                ))}
             </div>
           </main>
         </SidebarInset>
@@ -527,6 +572,33 @@ export default function HomePage() {
 }
 
 // --- UI Components ---
+
+const DropdownMenuItems = ({ onRename, onDelete }: { onRename: () => void; onDelete: () => void }) => (
+  <>
+    <DropdownMenuItem onSelect={onRename}>
+      <Pencil className="mr-2 h-4 w-4" />
+      <span>Rename</span>
+    </DropdownMenuItem>
+    <DropdownMenuItem onSelect={onDelete} className="text-destructive focus:text-destructive">
+      <Trash2 className="mr-2 h-4 w-4" />
+      <span>Delete</span>
+    </DropdownMenuItem>
+  </>
+)
+
+const ContextMenuItems = ({ onRename, onDelete }: { onRename: () => void; onDelete: () => void }) => (
+  <>
+    <ContextMenuItem onSelect={onRename}>
+      <Pencil className="mr-2 h-4 w-4" />
+      <span>Rename</span>
+    </ContextMenuItem>
+    <ContextMenuItem onSelect={onDelete} className="text-destructive focus:text-destructive">
+      <Trash2 className="mr-2 h-4 w-4" />
+      <span>Delete</span>
+    </ContextMenuItem>
+  </>
+)
+
 function ItemContextMenu({
   children,
   onRename,
@@ -554,28 +626,14 @@ function ItemContextMenu({
                 </Button>
               </DropdownMenuTrigger>
               <DropdownMenuContent>
-                <DropdownMenuItem onSelect={onRename}>
-                  <Pencil className="mr-2 h-4 w-4" />
-                  <span>Rename</span>
-                </DropdownMenuItem>
-                <DropdownMenuItem onSelect={onDelete} className="text-destructive focus:text-destructive">
-                  <Trash2 className="mr-2 h-4 w-4" />
-                  <span>Delete</span>
-                </DropdownMenuItem>
+                <DropdownMenuItems onRename={onRename} onDelete={onDelete} />
               </DropdownMenuContent>
             </DropdownMenu>
           </div>
         </div>
       </ContextMenuTrigger>
       <ContextMenuContent>
-        <ContextMenuItem onSelect={onRename}>
-          <Pencil className="mr-2 h-4 w-4" />
-          <span>Rename</span>
-        </ContextMenuItem>
-        <ContextMenuItem onSelect={onDelete} className="text-destructive focus:text-destructive">
-          <Trash2 className="mr-2 h-4 w-4" />
-          <span>Delete</span>
-        </ContextMenuItem>
+        <ContextMenuItems onRename={onRename} onDelete={onDelete} />
       </ContextMenuContent>
     </ContextMenu>
   )
@@ -585,7 +643,11 @@ function NewFolderDialog({
   open,
   onOpenChange,
   onCreate,
-}: { open: boolean; onOpenChange: (open: boolean) => void; onCreate: (name: string) => void }) {
+}: {
+  open: boolean
+  onOpenChange: (open: boolean) => void
+  onCreate: (name: string) => void
+}) {
   const [name, setName] = useState("")
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
