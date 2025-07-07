@@ -1,6 +1,7 @@
 "use client"
 
 import { ContextMenu, ContextMenuContent, ContextMenuItem, ContextMenuTrigger } from "@/components/ui/context-menu"
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 
 import type React from "react"
 
@@ -726,11 +727,21 @@ function SettingsPanel({
   const [name, setName] = useState(model.name)
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false)
   const thumbnailInputRef = useRef<HTMLInputElement>(null)
+
+  const { data: allFolders, error: foldersError } = useSWR<Folder[]>("/api/folders/all", fetcher)
+
   useEffect(() => {
     setName(model.name)
   }, [model.name])
+
   const handleNameBlur = () => {
     if (name !== model.name) onUpdate(model.id, { name })
+  }
+
+  const handleFolderChange = (newFolderId: string) => {
+    const folderId = newFolderId === "root" ? null : newFolderId
+    onUpdate(model.id, { folder_id: folderId })
+    toast.success(`Moved "${model.name}" to a new folder.`)
   }
 
   return (
@@ -777,6 +788,34 @@ function SettingsPanel({
             />
             <Pencil className="absolute right-2.5 top-1/2 -translate-y-1/2 h-4 w-4 text-gray-500" />
           </div>
+        </div>
+        <div>
+          <label htmlFor="folder-select" className="text-sm font-medium text-gray-400">
+            Folder
+          </label>
+          <Select value={model.folder_id || "root"} onValueChange={handleFolderChange}>
+            <SelectTrigger id="folder-select" className="mt-2 bg-white/10 border-white/20 text-white">
+              <SelectValue placeholder="Select a folder" />
+            </SelectTrigger>
+            <SelectContent className="bg-neutral-900 border-white/20 text-white">
+              <SelectItem value="root">Assets (Root)</SelectItem>
+              {foldersError && (
+                <SelectItem value="error" disabled>
+                  Error loading folders
+                </SelectItem>
+              )}
+              {!allFolders && !foldersError && (
+                <SelectItem value="loading" disabled>
+                  Loading...
+                </SelectItem>
+              )}
+              {allFolders?.map((folder) => (
+                <SelectItem key={folder.id} value={folder.id}>
+                  {folder.name}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
         </div>
         <div>
           <label className="text-sm font-medium text-gray-400">Light Intensity</label>
