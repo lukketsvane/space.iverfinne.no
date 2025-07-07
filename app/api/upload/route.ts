@@ -1,29 +1,34 @@
-import { handleUpload } from "@vercel/blob/client"
+import { handleUpload, type HandleUploadBody } from "@vercel/blob/client"
 import { NextResponse } from "next/server"
 
 export const runtime = "nodejs"
 
 export async function POST(request: Request): Promise<NextResponse> {
-  // The request body should not be consumed here.
-  // The `handleUpload` function will read the request body itself.
+  const body = (await request.json()) as HandleUploadBody
 
   try {
     const jsonResponse = await handleUpload({
-      request, // Pass the raw request object directly to the handler.
+      body,
+      request,
       onBeforeGenerateToken: async (pathname: string) => {
         return {
-          // Allow .glb files, which can have either of these content types.
-          allowedContentTypes: ["model/gltf-binary", "application/octet-stream"],
+          allowedContentTypes: [
+            "model/gltf-binary",
+            "application/octet-stream",
+            "image/jpeg",
+            "image/png",
+            "image/webp",
+            "image/gif",
+          ],
           tokenPayload: JSON.stringify({
             // Optional: pass any custom data to the onUploadCompleted callback.
           }),
         }
       },
       onUploadCompleted: async ({ blob, tokenPayload }) => {
-        // This callback is called after the file is uploaded to Vercel Blob.
         console.log("Blob upload completed", blob, tokenPayload)
         try {
-          // You can add any server-side logic here, e.g., saving the blob.url to your database.
+          // Server-side logic after upload completes
         } catch (error) {
           throw new Error("Could not run post-upload logic")
         }
