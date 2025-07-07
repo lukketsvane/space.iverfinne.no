@@ -22,7 +22,6 @@ import {
   ChevronLeft,
   Palette,
   Trash2,
-  Settings,
   ImageIcon,
   Pencil,
   MoreVertical,
@@ -31,6 +30,8 @@ import {
   Download,
   Grid,
   FolderSymlink,
+  Search,
+  ChevronDown,
 } from "lucide-react"
 import { upload } from "@vercel/blob/client"
 import useSWR, { useSWRConfig } from "swr"
@@ -48,7 +49,6 @@ import {
   DialogDescription,
   DialogFooter,
 } from "@/components/ui/dialog"
-import { Sheet, SheetContent, SheetTrigger } from "@/components/ui/sheet"
 import { Skeleton } from "@/components/ui/skeleton"
 import {
   DropdownMenu,
@@ -127,6 +127,7 @@ function App() {
   const { mutate } = useSWRConfig()
   const [currentFolderId, setCurrentFolderId] = useState<string | null>(null)
   const [breadcrumbs, setBreadcrumbs] = useState<{ id: string | null; name: string }[]>([{ id: null, name: "Assets" }])
+  const [searchQuery, setSearchQuery] = useState("")
 
   const galleryUrl = `/api/gallery?folderId=${currentFolderId || ""}`
   const { data: gallery, error, isLoading } = useSWR<GalleryContents>(galleryUrl, fetcher)
@@ -145,10 +146,81 @@ function App() {
   const [lightIntensity, setLightIntensity] = useState(1)
   const [isSettingsOpen, setIsSettingsOpen] = useState(false)
   const [isDragging, setIsDragging] = useState(false)
+  const [isSettingsPanelOpen, setIsSettingsPanelOpen] = useState(true)
+
+  // Add these lines for panel dragging
+  const [panelPosition, setPanelPosition] = useState({ x: 0, y: 0 })
+  const [isDraggingPanel, setIsDraggingPanel] = useState(false)
+  const dragStartPos = useRef({ x: 0, y: 0 })
+  const panelRef = useRef<HTMLDivElement>(null)
 
   const fileInputRef = useRef<HTMLInputElement>(null)
 
+  const [lightPosition, setLightPosition] = useState<[number, number, number]>([5, 5, 5])
+  const [isOrbitControlsEnabled, setIsOrbitControlsEnabled] = useState(true)
+  const isMovingLight = useRef(false)
+  const dragStartRef = useRef<{ x: number; y: number } | null>(null)
+  const tipShown = useRef(false)
+
   // --- Event Handlers & Actions ---
+
+  const handlePanelDragStart = (e: React.PointerEvent<HTMLDivElement>) => {
+    if ((e.target as HTMLElement).closest("button")) {
+      return
+    }
+    e.preventDefault()
+    setIsDraggingPanel(true)
+    dragStartPos.current = {
+      x: e.clientX - panelPosition.x,
+      y: e.clientY - panelPosition.y,
+    }
+    document.body.style.cursor = "grabbing"
+    document.body.style.userSelect = "none"
+  }
+
+  useEffect(() => {
+    const handlePanelDragMove = (e: PointerEvent) => {
+      if (!isDraggingPanel || !panelRef.current) return
+
+      let newX = e.clientX - dragStartPos.current.x
+      let newY = e.clientY - dragStartPos.current.y
+
+      const panelWidth = panelRef.current.offsetWidth
+      const panelHeight = panelRef.current.offsetHeight
+      const viewportWidth = window.innerWidth
+      const viewportHeight = window.innerHeight
+      const initialTop = 16 // from top-4
+      const initialRight = 16 // from right-4
+
+      const minX = -(viewportWidth - panelWidth - initialRight)
+      const maxX = initialRight
+      const minY = -initialTop
+      const maxY = viewportHeight - panelHeight - initialTop
+
+      newX = Math.max(minX, Math.min(newX, maxX))
+      newY = Math.max(minY, Math.min(newY, maxY))
+
+      setPanelPosition({ x: newX, y: newY })
+    }
+
+    const handlePanelDragEnd = () => {
+      if (!isDraggingPanel) return
+      setIsDraggingPanel(false)
+      document.body.style.cursor = "auto"
+      document.body.style.userSelect = "auto"
+    }
+
+    if (isDraggingPanel) {
+      window.addEventListener("pointermove", handlePanelDragMove)
+      window.addEventListener("pointerup", handlePanelDragEnd)
+    }
+
+    return () => {
+      window.removeEventListener("pointermove", handlePanelDragMove)
+      window.removeEventListener("pointerup", handlePanelDragEnd)
+    }
+  }, [isDraggingPanel, isSettingsPanelOpen]) // Re-check constraints if panel height changes
+
   const handleUpload = async (files: FileList | null) => {
     if (!files || files.length === 0) return
     const newUploads = Array.from(files).map((file) => ({ name: file.name, progress: 0 }))
@@ -160,7 +232,8 @@ function App() {
         return
       }
       try {
-        const newBlob = await upload(file.name, file, { access: "public", handleUploadUrl: "/api/upload" })
+        const sanitizedFilename = file.name.replace(/\s+/g, "_")
+        const newBlob = await upload(sanitizedFilename, file, { access: "public", handleUploadUrl: "/api/upload" })
         const modelName = file.name.replace(/\.glb$/, "")
         await fetch("/api/models", {
           method: "POST",
@@ -254,11 +327,13 @@ function App() {
   const handleNavigateToFolder = (folder: Folder) => {
     setCurrentFolderId(folder.id)
     setBreadcrumbs((prev) => [...prev, { id: folder.id, name: folder.name }])
+    setSearchQuery("")
   }
 
   const handleBreadcrumbClick = (folderId: string | null, index: number) => {
     setCurrentFolderId(folderId)
     setBreadcrumbs((prev) => prev.slice(0, index + 1))
+    setSearchQuery("")
   }
 
   const handleModelUpdate = async (id: string, updates: Partial<Omit<Model, "id" | "created_at">>) => {
@@ -282,7 +357,8 @@ function App() {
     if (!selectedModel) return
     toast.info(`Uploading thumbnail for ${selectedModel.name}...`)
     try {
-      const newBlob = await upload(file.name, file, { access: "public", handleUploadUrl: "/api/upload" })
+      const sanitizedFilename = file.name.replace(/\s+/g, "_")
+      const newBlob = await upload(sanitizedFilename, file, { access: "public", handleUploadUrl: "/api/upload" })
       await handleModelUpdate(selectedModel.id, { thumbnail_url: newBlob.url })
     } catch (err) {
       toast.error("Failed to upload thumbnail.")
@@ -320,10 +396,76 @@ function App() {
     [selectedModel, gallery],
   )
 
+  const handlePointerDown = (e: React.PointerEvent) => {
+    if (e.shiftKey) {
+      isMovingLight.current = true
+      setIsOrbitControlsEnabled(false)
+      dragStartRef.current = { x: e.clientX, y: e.clientY }
+      ;(e.target as HTMLElement).style.cursor = "grabbing"
+    }
+  }
+
+  const handlePointerMove = (e: React.PointerEvent) => {
+    if (isMovingLight.current && dragStartRef.current) {
+      const deltaX = e.clientX - dragStartRef.current.x
+      const deltaY = e.clientY - dragStartRef.current.y
+
+      const sensitivity = 0.05
+      setLightPosition((prev) => [
+        prev[0] + deltaX * sensitivity,
+        prev[1] - deltaY * sensitivity, // Y is inverted in screen coordinates
+        prev[2],
+      ])
+
+      dragStartRef.current = { x: e.clientX, y: e.clientY }
+    }
+  }
+
+  const handlePointerUp = (e: React.PointerEvent) => {
+    if (isMovingLight.current) {
+      isMovingLight.current = false
+      setIsOrbitControlsEnabled(true)
+      dragStartRef.current = null
+      ;(e.target as HTMLElement).style.cursor = e.shiftKey ? "grab" : "auto"
+    }
+  }
+
   useEffect(() => {
     window.addEventListener("keydown", handleKeyDown)
     return () => window.removeEventListener("keydown", handleKeyDown)
   }, [handleKeyDown])
+
+  useEffect(() => {
+    if (selectedModel && !tipShown.current) {
+      toast.info("Pro-tip: Hold Shift and drag to move the light source.", {
+        duration: 5000,
+      })
+      tipShown.current = true
+    }
+  }, [selectedModel])
+
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === "Shift" && !isMovingLight.current) {
+        const canvas = document.querySelector("canvas")
+        if (canvas) canvas.style.cursor = "grab"
+      }
+    }
+    const handleKeyUp = (e: KeyboardEvent) => {
+      if (e.key === "Shift" && !isMovingLight.current) {
+        const canvas = document.querySelector("canvas")
+        if (canvas) canvas.style.cursor = "auto"
+      }
+    }
+    window.addEventListener("keydown", handleKeyDown)
+    window.addEventListener("keyup", handleKeyUp)
+    return () => {
+      window.removeEventListener("keydown", handleKeyDown)
+      window.removeEventListener("keyup", handleKeyUp)
+      const canvas = document.querySelector("canvas")
+      if (canvas) canvas.style.cursor = "auto"
+    }
+  }, [])
 
   const handleDragEnter = (e: React.DragEvent<HTMLElement>) => {
     e.preventDefault()
@@ -351,19 +493,30 @@ function App() {
     }
   }
 
+  const filteredFolders =
+    gallery?.folders?.filter((folder) => folder.name.toLowerCase().includes(searchQuery.toLowerCase())) ?? []
+  const filteredModels =
+    gallery?.models?.filter((model) => model.name.toLowerCase().includes(searchQuery.toLowerCase())) ?? []
+
   // --- Render Logic ---
   if (selectedModel) {
     return (
       <div className="w-full h-screen relative" style={{ backgroundColor: bgColor }}>
         <Toaster richColors />
-        <Canvas camera={{ fov: 50, position: [0, 1, 5] }}>
+        <Canvas
+          camera={{ fov: 50, position: [0, 1, 5] }}
+          onPointerDown={handlePointerDown}
+          onPointerMove={handlePointerMove}
+          onPointerUp={handlePointerUp}
+          onPointerLeave={handlePointerUp}
+        >
           <Suspense fallback={<Loader />}>
             <Environment preset="city" />
             <ambientLight intensity={0.2} />
-            <directionalLight position={[5, 5, 5]} intensity={lightIntensity} />
+            <directionalLight position={lightPosition} intensity={lightIntensity} />
             <ModelViewer modelUrl={selectedModel.model_url} materialMode={materialMode} />
           </Suspense>
-          <OrbitControls enablePan={true} enableZoom={true} enableRotate={true} />
+          <OrbitControls enabled={isOrbitControlsEnabled} enablePan={true} enableZoom={true} enableRotate={true} />
         </Canvas>
         <div className="absolute top-4 left-4">
           <Button
@@ -375,28 +528,42 @@ function App() {
             <ChevronLeft className="h-6 w-6" />
           </Button>
         </div>
-        <div className="absolute top-4 right-4">
-          <Sheet open={isSettingsOpen} onOpenChange={setIsSettingsOpen}>
-            <SheetTrigger asChild>
-              <Button variant="ghost" size="icon" className="text-white hover:bg-white/20">
-                <Settings className="h-6 w-6" />
-              </Button>
-            </SheetTrigger>
-            <SheetContent className="bg-black/50 backdrop-blur-sm border-white/20 w-[350px] sm:w-[400px]">
-              <SettingsPanel
-                model={selectedModel}
-                onUpdate={handleModelUpdate}
-                onDelete={() =>
-                  handleDeleteItem({ id: selectedModel.id, type: "model" }).then(() => setSelectedModel(null))
-                }
-                onThumbnailUpload={handleThumbnailUpload}
-                lightIntensity={lightIntensity}
-                onLightIntensityChange={setLightIntensity}
-                bgColor={bgColor}
-                onBgColorChange={setBgColor}
+        <div
+          ref={panelRef}
+          className="absolute top-4 right-4 w-[350px] bg-black/50 backdrop-blur-sm border border-white/20 rounded-lg text-white z-10"
+          style={{ transform: `translate(${panelPosition.x}px, ${panelPosition.y}px)` }}
+        >
+          <div className="flex items-center justify-between p-4 cursor-grab" onPointerDown={handlePanelDragStart}>
+            <h2 className="text-lg font-semibold">Settings</h2>
+            <button
+              onClick={() => setIsSettingsPanelOpen(!isSettingsPanelOpen)}
+              className="z-10 p-1 -m-1 cursor-pointer"
+            >
+              <ChevronDown
+                className={`h-5 w-5 transition-transform duration-300 pointer-events-none ${
+                  isSettingsPanelOpen ? "rotate-180" : ""
+                }`}
               />
-            </SheetContent>
-          </Sheet>
+            </button>
+          </div>
+          <div
+            className={`transition-all duration-300 ease-in-out overflow-hidden ${
+              isSettingsPanelOpen ? "max-h-[1000px] opacity-100" : "max-h-0 opacity-0"
+            }`}
+          >
+            <SettingsPanel
+              model={selectedModel}
+              onUpdate={handleModelUpdate}
+              onDelete={() =>
+                handleDeleteItem({ id: selectedModel.id, type: "model" }).then(() => setSelectedModel(null))
+              }
+              onThumbnailUpload={handleThumbnailUpload}
+              lightIntensity={lightIntensity}
+              onLightIntensityChange={setLightIntensity}
+              bgColor={bgColor}
+              onBgColorChange={setBgColor}
+            />
+          </div>
         </div>
         <div className="absolute bottom-4 left-1/2 -translate-x-1/2 bg-black/50 backdrop-blur-sm p-2 rounded-full flex items-center gap-1">
           <Button
@@ -479,7 +646,7 @@ function App() {
           </SidebarContent>
         </Sidebar>
         <SidebarInset>
-          <header className="flex items-center justify-between p-4 border-b">
+          <header className="flex items-center justify-between p-4 border-b gap-4">
             <div className="flex items-center gap-2">
               <div className="flex items-center text-sm">
                 {breadcrumbs.map((crumb, index) => (
@@ -495,6 +662,16 @@ function App() {
                   </Fragment>
                 ))}
               </div>
+            </div>
+            <div className="relative">
+              <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+              <Input
+                type="search"
+                placeholder="Search..."
+                className="pl-8 w-48 md:w-64"
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+              />
             </div>
           </header>
           <main
@@ -521,6 +698,7 @@ function App() {
             )}
             {error && <div className="text-center text-destructive">Failed to load gallery.</div>}
             {!isLoading &&
+              !searchQuery &&
               gallery &&
               Array.isArray(gallery.folders) &&
               gallery.folders.length === 0 &&
@@ -533,6 +711,13 @@ function App() {
                   <p className="mt-2">Drag and drop files here or use the upload button.</p>
                 </div>
               )}
+            {!isLoading && searchQuery && filteredFolders.length === 0 && filteredModels.length === 0 && (
+              <div className="text-center text-muted-foreground flex flex-col items-center justify-center h-full pt-20">
+                <Search size={64} className="mb-4" />
+                <h2 className="text-2xl font-semibold">No results found</h2>
+                <p className="mt-2">Your search for "{searchQuery}" did not match any items.</p>
+              </div>
+            )}
             <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-4">
               {uploadingFiles.map((file) => (
                 <div
@@ -545,55 +730,51 @@ function App() {
                   <p className="text-xs text-center truncate w-full">{file.name}</p>
                 </div>
               ))}
-              {gallery &&
-                Array.isArray(gallery.folders) &&
-                gallery.folders.map((folder) => (
-                  <ItemContextMenu
-                    key={folder.id}
-                    onRename={() => setRenameItem({ ...folder, type: "folder" })}
-                    onDelete={() => handleDeleteItem({ id: folder.id, type: "folder" })}
-                    onMove={(targetFolderId) => handleMoveItem({ id: folder.id, type: "folder" }, targetFolderId)}
-                    allFolders={allFolders}
-                    currentItem={{ id: folder.id, type: "folder", parent_id: folder.parent_id }}
+              {filteredFolders.map((folder) => (
+                <ItemContextMenu
+                  key={folder.id}
+                  onRename={() => setRenameItem({ ...folder, type: "folder" })}
+                  onDelete={() => handleDeleteItem({ id: folder.id, type: "folder" })}
+                  onMove={(targetFolderId) => handleMoveItem({ id: folder.id, type: "folder" }, targetFolderId)}
+                  allFolders={allFolders}
+                  currentItem={{ id: folder.id, type: "folder", parent_id: folder.parent_id }}
+                >
+                  <div
+                    onDoubleClick={() => handleNavigateToFolder(folder)}
+                    className="group relative aspect-square rounded-lg overflow-hidden cursor-pointer flex flex-col items-center justify-center bg-muted hover:bg-secondary transition-colors"
                   >
-                    <div
-                      onDoubleClick={() => handleNavigateToFolder(folder)}
-                      className="group relative aspect-square rounded-lg overflow-hidden cursor-pointer flex flex-col items-center justify-center bg-muted hover:bg-secondary transition-colors"
-                    >
-                      <FolderIcon className="w-1/3 h-1/3 text-foreground/50" />
-                      <p className="text-sm font-semibold truncate mt-2 text-center w-full px-2">{folder.name}</p>
-                    </div>
-                  </ItemContextMenu>
-                ))}
-              {gallery &&
-                Array.isArray(gallery.models) &&
-                gallery.models.map((model) => (
-                  <ItemContextMenu
-                    key={model.id}
-                    onRename={() => setRenameItem({ ...model, type: "model" })}
-                    onDelete={() => handleDeleteItem({ id: model.id, type: "model" })}
-                    onMove={(targetFolderId) => handleMoveItem({ id: model.id, type: "model" }, targetFolderId)}
-                    allFolders={allFolders}
-                    currentItem={{ id: model.id, type: "model", parent_id: model.folder_id }}
+                    <FolderIcon className="w-1/3 h-1/3 text-foreground/50" />
+                    <p className="text-sm font-semibold truncate mt-2 text-center w-full px-2">{folder.name}</p>
+                  </div>
+                </ItemContextMenu>
+              ))}
+              {filteredModels.map((model) => (
+                <ItemContextMenu
+                  key={model.id}
+                  onRename={() => setRenameItem({ ...model, type: "model" })}
+                  onDelete={() => handleDeleteItem({ id: model.id, type: "model" })}
+                  onMove={(targetFolderId) => handleMoveItem({ id: model.id, type: "model" }, targetFolderId)}
+                  allFolders={allFolders}
+                  currentItem={{ id: model.id, type: "model", parent_id: model.folder_id }}
+                >
+                  <div
+                    onClick={() => setSelectedModel(model)}
+                    className="group relative aspect-square rounded-lg overflow-hidden cursor-pointer"
                   >
-                    <div
-                      onClick={() => setSelectedModel(model)}
-                      className="group relative aspect-square rounded-lg overflow-hidden cursor-pointer"
-                    >
-                      <img
-                        src={model.thumbnail_url || "/placeholder.svg"}
-                        alt={model.name}
-                        className="w-full h-full object-contain transition-transform duration-300 group-hover:scale-110 bg-muted"
-                        onError={(e) => {
-                          ;(e.target as HTMLImageElement).src = `/placeholder.svg?width=400&height=400&query=error`
-                        }}
-                      />
-                      <div className="absolute inset-0 bg-black/60 opacity-0 group-hover:opacity-100 transition-opacity duration-300 flex items-end p-2">
-                        <p className="text-sm font-semibold truncate text-white">{model.name}</p>
-                      </div>
+                    <img
+                      src={model.thumbnail_url || "/placeholder.svg"}
+                      alt={model.name}
+                      className="w-full h-full object-contain transition-transform duration-300 group-hover:scale-110 bg-muted"
+                      onError={(e) => {
+                        ;(e.target as HTMLImageElement).src = `/placeholder.svg?width=400&height=400&query=error`
+                      }}
+                    />
+                    <div className="absolute inset-0 bg-black/60 opacity-0 group-hover:opacity-100 transition-opacity duration-300 flex items-end p-2">
+                      <p className="text-sm font-semibold truncate text-white">{model.name}</p>
                     </div>
-                  </ItemContextMenu>
-                ))}
+                  </div>
+                </ItemContextMenu>
+              ))}
             </div>
           </main>
         </SidebarInset>
@@ -875,8 +1056,7 @@ function SettingsPanel({
   }
 
   return (
-    <div className="p-4 flex flex-col h-full text-white">
-      <h2 className="text-2xl font-bold mb-6">Settings</h2>
+    <div className="px-4 pb-4 flex flex-col h-full text-white">
       <div className="space-y-6 flex-1 overflow-y-auto pr-2">
         <div>
           <label className="text-sm font-medium text-gray-400">Thumbnail</label>
