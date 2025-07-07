@@ -1,6 +1,14 @@
 "use client"
 
-import { ContextMenu, ContextMenuContent, ContextMenuItem, ContextMenuTrigger } from "@/components/ui/context-menu"
+import {
+  ContextMenu,
+  ContextMenuContent,
+  ContextMenuItem,
+  ContextMenuTrigger,
+  ContextMenuSub,
+  ContextMenuSubTrigger,
+  ContextMenuSubContent,
+} from "@/components/ui/context-menu"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 
 import type React from "react"
@@ -22,6 +30,7 @@ import {
   ChevronRight,
   Download,
   Grid,
+  FolderSymlink,
 } from "lucide-react"
 import { upload } from "@vercel/blob/client"
 import useSWR, { useSWRConfig } from "swr"
@@ -41,7 +50,16 @@ import {
 } from "@/components/ui/dialog"
 import { Sheet, SheetContent, SheetTrigger } from "@/components/ui/sheet"
 import { Skeleton } from "@/components/ui/skeleton"
-import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu"
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+  DropdownMenuSub,
+  DropdownMenuSubTrigger,
+  DropdownMenuPortal,
+  DropdownMenuSubContent,
+} from "@/components/ui/dropdown-menu"
 import {
   SidebarProvider,
   Sidebar,
@@ -112,6 +130,7 @@ function App() {
 
   const galleryUrl = `/api/gallery?folderId=${currentFolderId || ""}`
   const { data: gallery, error, isLoading } = useSWR<GalleryContents>(galleryUrl, fetcher)
+  const { data: allFolders } = useSWR<Folder[]>("/api/folders/all", fetcher)
 
   const [selectedModel, setSelectedModel] = useState<Model | null>(null)
   const [uploadingFiles, setUploadingFiles] = useState<{ name: string; progress: number }[]>([])
@@ -212,6 +231,23 @@ function App() {
       mutate(galleryUrl)
     } catch (err) {
       toast.error(`Failed to delete: ${(err as Error).message}`)
+    }
+  }
+
+  const handleMoveItem = async (item: { id: string; type: "folder" | "model" }, targetFolderId: string | null) => {
+    const url = item.type === "folder" ? `/api/folders/${item.id}` : `/api/models/${item.id}`
+    const body = item.type === "folder" ? { parent_id: targetFolderId } : { folder_id: targetFolderId }
+
+    try {
+      await fetch(url, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      })
+      toast.success("Item moved successfully")
+      mutate(galleryUrl)
+    } catch (err) {
+      toast.error("Failed to move item.")
     }
   }
 
@@ -516,6 +552,9 @@ function App() {
                     key={folder.id}
                     onRename={() => setRenameItem({ ...folder, type: "folder" })}
                     onDelete={() => handleDeleteItem({ id: folder.id, type: "folder" })}
+                    onMove={(targetFolderId) => handleMoveItem({ id: folder.id, type: "folder" }, targetFolderId)}
+                    allFolders={allFolders}
+                    currentItem={{ id: folder.id, type: "folder", parent_id: folder.parent_id }}
                   >
                     <div
                       onDoubleClick={() => handleNavigateToFolder(folder)}
@@ -533,6 +572,9 @@ function App() {
                     key={model.id}
                     onRename={() => setRenameItem({ ...model, type: "model" })}
                     onDelete={() => handleDeleteItem({ id: model.id, type: "model" })}
+                    onMove={(targetFolderId) => handleMoveItem({ id: model.id, type: "model" }, targetFolderId)}
+                    allFolders={allFolders}
+                    currentItem={{ id: model.id, type: "model", parent_id: model.folder_id }}
                   >
                     <div
                       onClick={() => setSelectedModel(model)}
@@ -574,12 +616,73 @@ export default function HomePage() {
 
 // --- UI Components ---
 
-const DropdownMenuItems = ({ onRename, onDelete }: { onRename: () => void; onDelete: () => void }) => (
+interface MenuItemsProps {
+  onRename: () => void
+  onDelete: () => void
+  onMove: (targetFolderId: string | null) => void
+  allFolders?: Folder[]
+  currentItem: { id: string; type: "folder" | "model"; parent_id: string | null }
+}
+
+const MoveToSubMenuContent = ({ onMove, allFolders, currentItem }: Omit<MenuItemsProps, "onRename" | "onDelete">) => (
+  <>
+    {currentItem.parent_id !== null && (
+      <ContextMenuItem onSelect={() => onMove(null)}>
+        <FolderIcon className="mr-2 h-4 w-4" />
+        <span>Assets (Root)</span>
+      </ContextMenuItem>
+    )}
+    {allFolders
+      ?.filter((f) => f.id !== currentItem.id && f.id !== currentItem.parent_id)
+      .map((folder) => (
+        <ContextMenuItem key={folder.id} onSelect={() => onMove(folder.id)}>
+          <FolderIcon className="mr-2 h-4 w-4" />
+          <span>{folder.name}</span>
+        </ContextMenuItem>
+      ))}
+  </>
+)
+
+const MoveToDropdownSubMenuContent = ({
+  onMove,
+  allFolders,
+  currentItem,
+}: Omit<MenuItemsProps, "onRename" | "onDelete">) => (
+  <>
+    {currentItem.parent_id !== null && (
+      <DropdownMenuItem onSelect={() => onMove(null)}>
+        <FolderIcon className="mr-2 h-4 w-4" />
+        <span>Assets (Root)</span>
+      </DropdownMenuItem>
+    )}
+    {allFolders
+      ?.filter((f) => f.id !== currentItem.id && f.id !== currentItem.parent_id)
+      .map((folder) => (
+        <DropdownMenuItem key={folder.id} onSelect={() => onMove(folder.id)}>
+          <FolderIcon className="mr-2 h-4 w-4" />
+          <span>{folder.name}</span>
+        </DropdownMenuItem>
+      ))}
+  </>
+)
+
+const DropdownMenuItems = ({ onRename, onDelete, onMove, allFolders, currentItem }: MenuItemsProps) => (
   <>
     <DropdownMenuItem onSelect={onRename}>
       <Pencil className="mr-2 h-4 w-4" />
       <span>Rename</span>
     </DropdownMenuItem>
+    <DropdownMenuSub>
+      <DropdownMenuSubTrigger>
+        <FolderSymlink className="mr-2 h-4 w-4" />
+        <span>Move to...</span>
+      </DropdownMenuSubTrigger>
+      <DropdownMenuPortal>
+        <DropdownMenuSubContent>
+          <MoveToDropdownSubMenuContent onMove={onMove} allFolders={allFolders} currentItem={currentItem} />
+        </DropdownMenuSubContent>
+      </DropdownMenuPortal>
+    </DropdownMenuSub>
     <DropdownMenuItem onSelect={onDelete} className="text-destructive focus:text-destructive">
       <Trash2 className="mr-2 h-4 w-4" />
       <span>Delete</span>
@@ -587,12 +690,21 @@ const DropdownMenuItems = ({ onRename, onDelete }: { onRename: () => void; onDel
   </>
 )
 
-const ContextMenuItems = ({ onRename, onDelete }: { onRename: () => void; onDelete: () => void }) => (
+const ContextMenuItems = ({ onRename, onDelete, onMove, allFolders, currentItem }: MenuItemsProps) => (
   <>
     <ContextMenuItem onSelect={onRename}>
       <Pencil className="mr-2 h-4 w-4" />
       <span>Rename</span>
     </ContextMenuItem>
+    <ContextMenuSub>
+      <ContextMenuSubTrigger>
+        <FolderSymlink className="mr-2 h-4 w-4" />
+        <span>Move to...</span>
+      </ContextMenuSubTrigger>
+      <ContextMenuSubContent>
+        <MoveToSubMenuContent onMove={onMove} allFolders={allFolders} currentItem={currentItem} />
+      </ContextMenuSubContent>
+    </ContextMenuSub>
     <ContextMenuItem onSelect={onDelete} className="text-destructive focus:text-destructive">
       <Trash2 className="mr-2 h-4 w-4" />
       <span>Delete</span>
@@ -604,10 +716,16 @@ function ItemContextMenu({
   children,
   onRename,
   onDelete,
+  onMove,
+  allFolders,
+  currentItem,
 }: {
   children: React.ReactNode
   onRename: () => void
   onDelete: () => void
+  onMove: (targetFolderId: string | null) => void
+  allFolders?: Folder[]
+  currentItem: { id: string; type: "folder" | "model"; parent_id: string | null }
 }) {
   return (
     <ContextMenu>
@@ -627,14 +745,26 @@ function ItemContextMenu({
                 </Button>
               </DropdownMenuTrigger>
               <DropdownMenuContent>
-                <DropdownMenuItems onRename={onRename} onDelete={onDelete} />
+                <DropdownMenuItems
+                  onRename={onRename}
+                  onDelete={onDelete}
+                  onMove={onMove}
+                  allFolders={allFolders}
+                  currentItem={currentItem}
+                />
               </DropdownMenuContent>
             </DropdownMenu>
           </div>
         </div>
       </ContextMenuTrigger>
       <ContextMenuContent>
-        <ContextMenuItems onRename={onRename} onDelete={onDelete} />
+        <ContextMenuItems
+          onRename={onRename}
+          onDelete={onDelete}
+          onMove={onMove}
+          allFolders={allFolders}
+          currentItem={currentItem}
+        />
       </ContextMenuContent>
     </ContextMenu>
   )
