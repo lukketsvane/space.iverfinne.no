@@ -23,16 +23,14 @@ export async function POST(request: Request): Promise<NextResponse> {
             "image/webp",
             "image/gif",
           ],
-          // We are not using the onUploadCompleted callback here.
-          // The client will handle updating the database after the upload finishes.
         }
       },
+      // We are NOT using onUploadCompleted here. The client will handle database logic.
     })
 
     return NextResponse.json(jsonResponse)
   } catch (error) {
     const message = error instanceof Error ? error.message : "Unknown error"
-    console.error("Error in upload handler:", message)
     return NextResponse.json({ error: `Upload failed: ${message}` }, { status: 400 })
   }
 }

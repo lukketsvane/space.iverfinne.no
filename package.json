@@ -39,6 +39,7 @@
     "@radix-ui/react-tooltip": "latest",
     "@react-three/drei": "latest",
     "@react-three/fiber": "latest",
+    "@supabase/supabase-js": "latest",
     "@vercel/blob": "latest",
     "autoprefixer": "^10.4.20",
     "class-variance-authority": "^0.7.1",
