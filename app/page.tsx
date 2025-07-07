@@ -1,8 +1,8 @@
 "use client"
 
 import type React from "react"
-
 import { useState, useRef, useEffect, Suspense } from "react"
+import useSWR, { useSWRConfig } from "swr"
 import { Canvas } from "@react-three/fiber"
 import { useGLTF, OrbitControls, Environment, Html } from "@react-three/drei"
 import * as THREE from "three"
@@ -33,16 +33,15 @@ interface Model {
   id: string
   name: string
   url: string
-  thumbnailUrl: string
+  thumbnail_url: string
+  created_at: string
 }
 
 type RenderMode = "pbr" | "normal" | "white"
 
-// --- INITIAL DATA ---
-const initialModels: Model[] = []
+const fetcher = (url: string) => fetch(url).then((res) => res.json())
 
 // --- 3D COMPONENTS ---
-
 function ModelComponent({ url, renderMode }: { url: string; renderMode: RenderMode }) {
   const { scene } = useGLTF(url)
   const originalMaterials = useRef<Map<string, THREE.Material>>(new Map())
@@ -123,7 +122,6 @@ function ViewerCanvas({
 }
 
 // --- UI COMPONENTS ---
-
 function Sidebar({ onUploadClick }: { onUploadClick: () => void }) {
   return (
     <aside className="w-64 bg-[#111111] p-4 flex flex-col shrink-0 h-full">
@@ -165,8 +163,8 @@ function SettingsPanel({
   onClose,
 }: {
   model: Model
-  onUpdateModel: (id: string, updates: Partial<Model>) => void
-  onDeleteModel: (id: string) => void
+  onUpdateModel: (id: string, updates: { name?: string; thumbnailUrl?: string }) => Promise<void>
+  onDeleteModel: (id: string) => Promise<void>
   bgColor: string
   onBgColorChange: (color: string) => void
   lightIntensity: number
@@ -174,14 +172,12 @@ function SettingsPanel({
   onClose?: () => void
 }) {
   const [name, setName] = useState(model.name)
+  const thumbnailInputRef = useRef<HTMLInputElement>(null)
+  const [isThumbnailUploading, setIsThumbnailUploading] = useState(false)
 
   useEffect(() => {
     setName(model.name)
   }, [model])
-
-  const handleNameChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    setName(e.target.value)
-  }
 
   const handleNameBlur = () => {
     if (name.trim() && name !== model.name) {
@@ -197,6 +193,26 @@ function SettingsPanel({
     }
   }
 
+  const handleThumbnailChange = async (event: React.ChangeEvent<HTMLInputElement>) => {
+    if (!event.target.files) return
+    const file = event.target.files[0]
+    if (!file) return
+
+    setIsThumbnailUploading(true)
+    try {
+      const newBlob = await upload(file.name, file, {
+        access: "public",
+        handleUploadUrl: "/api/upload",
+      })
+      await onUpdateModel(model.id, { thumbnailUrl: newBlob.url })
+    } catch (error) {
+      console.error("Thumbnail upload failed:", error)
+      alert("Thumbnail upload failed.")
+    } finally {
+      setIsThumbnailUploading(false)
+    }
+  }
+
   return (
     <div className="w-full h-full flex flex-col text-white">
       <div className="flex items-center justify-between mb-6">
@@ -207,7 +223,34 @@ function SettingsPanel({
           </Button>
         )}
       </div>
-      <div className="space-y-6 flex-1 overflow-y-auto">
+      <div className="space-y-6 flex-1 overflow-y-auto pr-2">
+        <div>
+          <label className="text-sm text-gray-400 block mb-2">Thumbnail</label>
+          <div className="flex items-center gap-4">
+            <div className="w-20 h-20 rounded-md bg-gray-800 flex-shrink-0 overflow-hidden relative">
+              <img
+                src={model.thumbnail_url || "/placeholder.svg"}
+                alt="Thumbnail"
+                className="w-full h-full object-cover"
+              />
+              {isThumbnailUploading && (
+                <div className="absolute inset-0 bg-black/60 flex items-center justify-center">
+                  <Loader className="w-6 h-6 animate-spin" />
+                </div>
+              )}
+            </div>
+            <Button variant="outline" onClick={() => thumbnailInputRef.current?.click()}>
+              Change
+            </Button>
+            <input
+              type="file"
+              ref={thumbnailInputRef}
+              onChange={handleThumbnailChange}
+              className="hidden"
+              accept="image/*"
+            />
+          </div>
+        </div>
         <div>
           <label htmlFor="modelName" className="text-sm text-gray-400 block mb-2">
             Name
@@ -216,7 +259,7 @@ function SettingsPanel({
             id="modelName"
             type="text"
             value={name}
-            onChange={handleNameChange}
+            onChange={(e) => setName(e.target.value)}
             onBlur={handleNameBlur}
             className="bg-gray-800 border-gray-700 text-white"
           />
@@ -251,42 +294,28 @@ function SettingsPanel({
 }
 
 // --- MAIN PAGE COMPONENT ---
-
 export default function ModelViewerPage() {
-  const [models, setModels] = useState<Model[]>(initialModels)
+  const { data: models, error, isLoading } = useSWR<Model[]>("/api/models", fetcher)
+  const { mutate } = useSWRConfig()
+
   const [selectedModel, setSelectedModel] = useState<Model | null>(null)
   const [renderMode, setRenderMode] = useState<RenderMode>("pbr")
   const [bgColor, setBgColor] = useState("#000000")
   const [lightIntensity, setLightIntensity] = useState(1.5)
   const inputFileRef = useRef<HTMLInputElement>(null)
-  const [isUploading, setIsUploading] = useState(false)
+  const [uploadingCount, setUploadingCount] = useState(0)
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false)
   const [isSettingsOpen, setIsSettingsOpen] = useState(false)
 
   useEffect(() => {
-    const storedModels = localStorage.getItem("3d-models")
-    if (storedModels) {
-      setModels(JSON.parse(storedModels))
-    } else {
-      setModels(initialModels)
-      localStorage.setItem("3d-models", JSON.stringify(initialModels))
-    }
-  }, [])
-
-  const updateLocalStorage = (updatedModels: Model[]) => {
-    localStorage.setItem("3d-models", JSON.stringify(updatedModels))
-  }
-
-  useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
-      if (!selectedModel) return
+      if (!selectedModel || !models) return
 
       if (event.key === "Escape") {
         setSelectedModel(null)
       }
 
       if (event.key === "ArrowRight" || event.key === "ArrowLeft") {
-        if (models.length === 0) return
         const currentIndex = models.findIndex((m) => m.id === selectedModel.id)
         if (currentIndex === -1) return
 
@@ -301,9 +330,7 @@ export default function ModelViewerPage() {
     }
 
     window.addEventListener("keydown", handleKeyDown)
-    return () => {
-      window.removeEventListener("keydown", handleKeyDown)
-    }
+    return () => window.removeEventListener("keydown", handleKeyDown)
   }, [selectedModel, models])
 
   const handleUploadClick = () => {
@@ -312,56 +339,81 @@ export default function ModelViewerPage() {
   }
 
   const handleFileChange = async (event: React.ChangeEvent<HTMLInputElement>) => {
-    if (!event.target.files) return
-    const file = event.target.files[0]
-    if (!file) return
+    const files = event.target.files
+    if (!files || files.length === 0) return
 
-    const modelName = prompt("Enter a name for the model:", file.name.replace(/\.[^/.]+$/, ""))
-    if (!modelName) return
+    setUploadingCount(files.length)
 
-    setIsUploading(true)
-    try {
-      const newBlob = await upload(file.name, file, {
-        access: "public",
-        handleUploadUrl: "/api/upload",
-      })
+    const uploadPromises = Array.from(files).map(async (file) => {
+      try {
+        const modelName = file.name.replace(/\.(glb|gltf)$/i, "")
 
-      const newModel: Model = {
-        id: newBlob.pathname,
-        name: modelName,
-        url: newBlob.url,
-        thumbnailUrl: `/placeholder.svg?width=200&height=200&query=3d+model+of+${encodeURIComponent(modelName)}`,
+        const newBlob = await upload(file.name, file, {
+          access: "public",
+          handleUploadUrl: "/api/upload",
+        })
+
+        const res = await fetch("/api/models", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            name: modelName,
+            url: newBlob.url,
+            thumbnailUrl: `/placeholder.svg?width=200&height=200&query=3d+model+of+${encodeURIComponent(modelName)}`,
+          }),
+        })
+
+        if (!res.ok) {
+          const errorData = await res.json()
+          throw new Error(errorData.error || "Failed to create model record")
+        }
+        return res.json()
+      } catch (error) {
+        console.error(`Failed to upload ${file.name}:`, error)
+        return { error: `Failed to upload ${file.name}` }
       }
-      setModels((prevModels) => {
-        const updatedModels = [...prevModels, newModel]
-        updateLocalStorage(updatedModels)
-        return updatedModels
-      })
+    })
+
+    try {
+      const results = await Promise.all(uploadPromises)
+      const successfulUploads = results.filter((r) => !r.error)
+      const failedUploads = results.filter((r) => r.error)
+
+      if (failedUploads.length > 0) {
+        alert(`${failedUploads.length} file(s) failed to upload. Please check the console for details.`)
+      }
+
+      if (successfulUploads.length > 0) {
+        mutate("/api/models")
+      }
     } catch (error) {
-      console.error("Upload failed:", error)
-      alert("Upload failed. Please check the console for details.")
+      console.error("An unexpected error occurred during uploads:", error)
+      alert("An unexpected error occurred during uploads. Please check the console.")
     } finally {
-      setIsUploading(false)
+      setUploadingCount(0)
+      if (inputFileRef.current) {
+        inputFileRef.current.value = ""
+      }
     }
   }
 
-  const handleUpdateModel = (id: string, updates: Partial<Model>) => {
-    setModels((prevModels) => {
-      const updatedModels = prevModels.map((m) => (m.id === id ? { ...m, ...updates } : m))
-      updateLocalStorage(updatedModels)
-      return updatedModels
+  const handleUpdateModel = async (id: string, updates: { name?: string; thumbnailUrl?: string }) => {
+    await fetch(`/api/models/${id}`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(updates),
     })
+    mutate("/api/models")
     if (selectedModel?.id === id) {
-      setSelectedModel((prev) => (prev ? { ...prev, ...updates } : null))
+      setSelectedModel((prev) =>
+        prev ? { ...prev, ...updates, thumbnail_url: updates.thumbnailUrl || prev.thumbnail_url } : null,
+      )
     }
   }
 
-  const handleDeleteModel = (id: string) => {
-    setModels((prevModels) => {
-      const updatedModels = prevModels.filter((m) => m.id !== id)
-      updateLocalStorage(updatedModels)
-      return updatedModels
-    })
+  const handleDeleteModel = async (id: string) => {
+    await fetch(`/api/models/${id}`, { method: "DELETE" })
+    mutate("/api/models")
     setSelectedModel(null)
     setIsSettingsOpen(false)
   }
@@ -380,14 +432,12 @@ export default function ModelViewerPage() {
   if (selectedModel) {
     return (
       <div className="w-full h-screen flex bg-black text-white overflow-hidden">
-        {/* Desktop Sidebar */}
         <div className="hidden md:flex flex-col p-4 border-r border-gray-800">
           <Button variant="ghost" size="icon" onClick={() => setSelectedModel(null)} className="mb-8">
             <ArrowLeft className="w-5 h-5" />
           </Button>
           <Sidebar onUploadClick={handleUploadClick} />
         </div>
-
         <main className="flex-1 relative">
           <ViewerCanvas
             model={selectedModel}
@@ -395,8 +445,6 @@ export default function ModelViewerPage() {
             bgColor={bgColor}
             lightIntensity={lightIntensity}
           />
-
-          {/* Mobile Header */}
           <div className="md:hidden absolute top-4 left-4 z-10">
             <Button variant="ghost" size="icon" onClick={() => setSelectedModel(null)}>
               <ArrowLeft className="w-5 h-5" />
@@ -407,8 +455,6 @@ export default function ModelViewerPage() {
               <Settings className="w-5 h-5" />
             </Button>
           </div>
-
-          {/* Desktop Settings */}
           <div className="hidden md:block absolute top-6 right-6 bg-[#1c1c1c] p-6 rounded-lg w-72">
             <SettingsPanel
               model={selectedModel}
@@ -420,8 +466,6 @@ export default function ModelViewerPage() {
               onLightIntensityChange={setLightIntensity}
             />
           </div>
-
-          {/* Mobile Settings Overlay */}
           {isSettingsOpen && (
             <div className="md:hidden fixed inset-0 z-30">
               <div className="absolute inset-0 bg-black/60" onClick={() => setIsSettingsOpen(false)} />
@@ -439,8 +483,6 @@ export default function ModelViewerPage() {
               </div>
             </div>
           )}
-
-          {/* Bottom Controls */}
           <div className="absolute bottom-6 left-1/2 -translate-x-1/2 flex items-center gap-2 bg-[#1c1c1c] p-2 rounded-full border border-gray-700 z-10">
             <Button
               variant="ghost"
@@ -478,19 +520,16 @@ export default function ModelViewerPage() {
             </Button>
           </div>
         </main>
-        <input type="file" ref={inputFileRef} onChange={handleFileChange} className="hidden" accept=".glb" />
+        <input type="file" ref={inputFileRef} onChange={handleFileChange} className="hidden" accept=".glb" multiple />
       </div>
     )
   }
 
   return (
     <div className="w-full min-h-screen flex flex-col md:flex-row bg-black text-white">
-      {/* Desktop Sidebar */}
       <div className="hidden md:block">
         <Sidebar onUploadClick={handleUploadClick} />
       </div>
-
-      {/* Mobile Sidebar Overlay */}
       {isMobileMenuOpen && (
         <div className="md:hidden fixed inset-0 z-30">
           <div className="absolute inset-0 bg-black/60" onClick={() => setIsMobileMenuOpen(false)} />
@@ -499,9 +538,7 @@ export default function ModelViewerPage() {
           </div>
         </div>
       )}
-
       <main className="flex-1 flex flex-col p-4 md:p-8 overflow-y-auto">
-        {/* Mobile Header */}
         <header className="md:hidden flex items-center justify-between mb-4">
           <div className="flex items-center gap-2">
             <Box className="w-6 h-6 text-white" />
@@ -512,40 +549,55 @@ export default function ModelViewerPage() {
           </Button>
         </header>
 
-        {models.length === 0 && !isUploading ? (
+        {isLoading && (
+          <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-6 gap-4 md:gap-6">
+            {Array.from({ length: 6 }).map((_, i) => (
+              <div key={i} className="aspect-square bg-[#1c1c1c] rounded-lg animate-pulse" />
+            ))}
+          </div>
+        )}
+
+        {!isLoading && models && models.length === 0 && uploadingCount === 0 && (
           <div className="flex flex-col items-center justify-center flex-1 text-gray-500 text-center">
             <Folder className="w-16 h-16 md:w-24 md:h-24 mb-4" />
             <h2 className="text-xl md:text-2xl font-semibold">Your gallery is empty</h2>
             <p className="mt-2 text-sm md:text-base">Upload your first 3D model to get started.</p>
             <Button className="mt-6" onClick={handleUploadClick}>
               <Upload className="w-4 h-4 mr-2" />
-              Upload Model
+              Upload Models
             </Button>
           </div>
-        ) : (
+        )}
+
+        {(models || uploadingCount > 0) && (
           <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-6 gap-4 md:gap-6">
-            {isUploading && (
-              <div className="aspect-square bg-[#1c1c1c] rounded-lg flex flex-col items-center justify-center text-gray-400">
-                <Loader className="w-8 h-8 animate-spin mb-2" />
-                <span>Uploading...</span>
-              </div>
-            )}
-            {models.map((model) => (
-              <div key={model.id} className="group cursor-pointer" onClick={() => setSelectedModel(model)}>
-                <div className="aspect-square bg-[#1c1c1c] rounded-lg overflow-hidden flex items-center justify-center">
-                  <img
-                    src={model.thumbnailUrl || "/placeholder.svg"}
-                    alt={model.name}
-                    className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300"
-                  />
+            {uploadingCount > 0 &&
+              Array.from({ length: uploadingCount }).map((_, i) => (
+                <div
+                  key={`uploading-${i}`}
+                  className="aspect-square bg-[#1c1c1c] rounded-lg flex flex-col items-center justify-center text-gray-400"
+                >
+                  <Loader className="w-8 h-8 animate-spin mb-2" />
+                  <span>Uploading...</span>
                 </div>
-                <p className="text-center mt-2 text-sm text-gray-300 truncate">{model.name}</p>
-              </div>
-            ))}
+              ))}
+            {models &&
+              models.map((model) => (
+                <div key={model.id} className="group cursor-pointer" onClick={() => setSelectedModel(model)}>
+                  <div className="aspect-square bg-[#1c1c1c] rounded-lg overflow-hidden flex items-center justify-center">
+                    <img
+                      src={model.thumbnail_url || "/placeholder.svg"}
+                      alt={model.name}
+                      className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300"
+                    />
+                  </div>
+                  <p className="text-center mt-2 text-sm text-gray-300 truncate">{model.name}</p>
+                </div>
+              ))}
           </div>
         )}
       </main>
-      <input type="file" ref={inputFileRef} onChange={handleFileChange} className="hidden" accept=".glb" />
+      <input type="file" ref={inputFileRef} onChange={handleFileChange} className="hidden" accept=".glb" multiple />
     </div>
   )
 }
