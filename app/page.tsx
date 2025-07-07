@@ -1,526 +1,537 @@
 "use client"
 
-import type React from "react"
-
-import { useState, useRef, useEffect, Suspense } from "react"
+import { useState, useRef, useEffect, Suspense, useCallback } from "react"
 import { Canvas } from "@react-three/fiber"
-import { useGLTF, OrbitControls, Environment, Html } from "@react-three/drei"
-import { PanelLeft, Upload, Folder, Settings, X, Trash2, Loader, ChevronLeft, Menu, Download } from "lucide-react"
-import { Button } from "@/components/ui/button"
-import { Card, CardContent, CardFooter } from "@/components/ui/card"
-import { Input } from "@/components/ui/input"
-import { Label } from "@/components/ui/label"
-import { Slider } from "@/components/ui/slider"
-import {
-  AlertDialog,
-  AlertDialogAction,
-  AlertDialogCancel,
-  AlertDialogContent,
-  AlertDialogDescription,
-  AlertDialogFooter,
-  AlertDialogHeader,
-  AlertDialogTitle,
-} from "@/components/ui/alert-dialog"
-import { useToast } from "@/components/ui/use-toast"
-import { Toaster } from "@/components/ui/toaster"
-import { Skeleton } from "@/components/ui/skeleton"
+import { useGLTF, OrbitControls, Environment, Html, useProgress } from "@react-three/drei"
+import { Upload, Folder, ChevronLeft, Palette, Trash2, Menu, X, Settings, ImageIcon, Pencil } from "lucide-react"
 import { upload } from "@vercel/blob/client"
-import useSWR, { mutate } from "swr"
+import useSWR, { useSWRConfig } from "swr"
+import { Toaster, toast } from "sonner"
 import * as THREE from "three"
 
-type Model = {
+import { Button } from "@/components/ui/button"
+import { Input } from "@/components/ui/input"
+import { Slider } from "@/components/ui/slider"
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogDescription,
+  DialogFooter,
+} from "@/components/ui/dialog"
+import { Sheet, SheetContent, SheetTrigger } from "@/components/ui/sheet"
+import { Skeleton } from "@/components/ui/skeleton"
+import { cn } from "@/lib/utils"
+
+// Define the structure of a Model object
+interface Model {
   id: string
   name: string
-  url: string
-  thumbnailUrl: string
-  createdAt: string
+  model_url: string
+  thumbnail_url: string
+  created_at: string
 }
 
-type RenderMode = "pbr" | "normal" | "white"
-
+// --- Data Fetching ---
 const fetcher = (url: string) => fetch(url).then((res) => res.json())
 
+// --- 3D Components ---
+
+function Loader() {
+  const { progress } = useProgress()
+  return (
+    <Html center>
+      <div className="text-white text-lg">{progress.toFixed(2)} % loaded</div>
+    </Html>
+  )
+}
+
 function ModelViewer({
-  model,
-  renderMode,
-  lightIntensity,
-  bgColor,
+  modelUrl,
+  materialMode,
 }: {
-  model: Model
-  renderMode: RenderMode
-  lightIntensity: number
-  bgColor: string
+  modelUrl: string
+  materialMode: "pbr" | "normal" | "white"
 }) {
-  const { scene } = useGLTF(model.url)
+  const { scene } = useGLTF(modelUrl)
 
   useEffect(() => {
     scene.traverse((child) => {
       if ((child as THREE.Mesh).isMesh) {
         const mesh = child as THREE.Mesh
-        mesh.castShadow = true
-        mesh.receiveShadow = true
-
-        if (renderMode === "normal") {
+        if (materialMode === "normal") {
           mesh.material = new THREE.MeshNormalMaterial()
-        } else if (renderMode === "white") {
-          mesh.material = new THREE.MeshStandardMaterial({
-            color: "white",
-            metalness: 0.1,
-            roughness: 0.5,
-          })
-        } else {
-          // PBR - use original materials, just ensure they are standard
-          if (!(mesh.material instanceof THREE.MeshStandardMaterial) && Array.isArray(mesh.material)) {
-            // Handle multi-material objects if necessary
-          }
+        } else if (materialMode === "white") {
+          mesh.material = new THREE.MeshStandardMaterial({ color: "white" })
         }
+        // For 'pbr', we use the original materials from the GLTF file.
       }
     })
-  }, [scene, renderMode])
+  }, [scene, materialMode])
 
-  return (
-    <Suspense
-      fallback={
-        <Html center>
-          <Loader className="animate-spin" />
-        </Html>
-      }
-    >
-      <primitive object={scene} />
-      <ambientLight intensity={0.5} />
-      <directionalLight position={[5, 10, 7.5]} intensity={lightIntensity} castShadow />
-      <OrbitControls />
-      <Environment preset="sunset" />
-      <color attach="background" args={[bgColor]} />
-    </Suspense>
-  )
+  return <primitive object={scene} />
 }
 
-export default function ModelGalleryPage() {
+// --- Main Application Component ---
+
+export default function HomePage() {
   const { data: models, error, isLoading } = useSWR<Model[]>("/api/models", fetcher)
+  const { mutate } = useSWRConfig()
   const [selectedModel, setSelectedModel] = useState<Model | null>(null)
   const [uploadingFiles, setUploadingFiles] = useState<{ name: string; progress: number }[]>([])
-  const [isSidebarOpen, setIsSidebarOpen] = useState(true)
-  const [isSettingsOpen, setIsSettingsOpen] = useState(true)
-  const [isMobile, setIsMobile] = useState(false)
 
-  // Viewer settings
-  const [renderMode, setRenderMode] = useState<RenderMode>("pbr")
-  const [lightIntensity, setLightIntensity] = useState(1.5)
-  const [bgColor, setBgColor] = useState("#111111")
-  const [modelName, setModelName] = useState("")
+  // Viewer settings state
+  const [materialMode, setMaterialMode] = useState<"pbr" | "normal" | "white">("pbr")
+  const [bgColor, setBgColor] = useState("#000000")
+  const [lightIntensity, setLightIntensity] = useState(1)
+  const [isSidebarOpen, setIsSidebarOpen] = useState(false)
+  const [isSettingsOpen, setIsSettingsOpen] = useState(false)
 
-  const [showDeleteConfirm, setShowDeleteConfirm] = useState(false)
-  const { toast } = useToast()
   const fileInputRef = useRef<HTMLInputElement>(null)
-  const thumbnailInputRef = useRef<HTMLInputElement>(null)
 
-  useEffect(() => {
-    const checkMobile = () => setIsMobile(window.innerWidth < 768)
-    checkMobile()
-    window.addEventListener("resize", checkMobile)
-    return () => window.removeEventListener("resize", checkMobile)
-  }, [])
+  // --- Event Handlers ---
 
-  useEffect(() => {
-    if (isMobile) {
-      setIsSidebarOpen(false)
-      setIsSettingsOpen(false)
-    } else {
-      setIsSidebarOpen(true)
-      setIsSettingsOpen(true)
-    }
-  }, [isMobile])
-
-  useEffect(() => {
-    if (selectedModel) {
-      setModelName(selectedModel.name)
-      setBgColor("#111111")
-      setLightIntensity(1.5)
-      setRenderMode("pbr")
-    }
-  }, [selectedModel])
-
-  useEffect(() => {
-    const handleKeyDown = (event: KeyboardEvent) => {
-      if (!selectedModel) return
-
-      if (event.key === "Escape") {
-        setSelectedModel(null)
-      }
-      if (event.key === "ArrowRight") {
-        const currentIndex = models?.findIndex((m) => m.id === selectedModel.id)
-        if (models && currentIndex !== undefined && currentIndex < models.length - 1) {
-          setSelectedModel(models[currentIndex + 1])
-        }
-      }
-      if (event.key === "ArrowLeft") {
-        const currentIndex = models?.findIndex((m) => m.id === selectedModel.id)
-        if (models && currentIndex !== undefined && currentIndex > 0) {
-          setSelectedModel(models[currentIndex - 1])
-        }
-      }
-    }
-    window.addEventListener("keydown", handleKeyDown)
-    return () => window.removeEventListener("keydown", handleKeyDown)
-  }, [selectedModel, models])
-
-  const handleUpload = async (event: React.ChangeEvent<HTMLInputElement>) => {
-    const files = event.target.files
+  const handleUpload = async (files: FileList | null) => {
     if (!files || files.length === 0) return
 
-    setUploadingFiles(Array.from(files).map((f) => ({ name: f.name, progress: 0 })))
+    const newUploads = Array.from(files).map((file) => ({
+      name: file.name,
+      progress: 0,
+    }))
+    setUploadingFiles((prev) => [...prev, ...newUploads])
 
     for (const file of Array.from(files)) {
+      const fileType = file.name.endsWith(".glb") ? "model" : "image"
+      if (fileType !== "model") {
+        toast.error(`Skipping non-GLB file: ${file.name}`)
+        setUploadingFiles((prev) => prev.filter((f) => f.name !== file.name))
+        continue
+      }
+
       try {
         const newBlob = await upload(file.name, file, {
           access: "public",
           handleUploadUrl: "/api/upload",
         })
 
-        const modelName = file.name.replace(/\.(glb|gltf)$/i, "")
-        const response = await fetch("/api/models", {
+        // Update progress for the uploaded file
+        setUploadingFiles((prev) => prev.map((f) => (f.name === file.name ? { ...f, progress: 100 } : f)))
+
+        // Add to database
+        const modelName = file.name.replace(/\.glb$/, "")
+        await fetch("/api/models", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
             name: modelName,
-            url: newBlob.url,
-            thumbnailUrl: `/placeholder.svg?width=200&height=200&query=${encodeURIComponent(modelName)}`,
+            model_url: newBlob.url,
+            thumbnail_url: `/placeholder.svg?width=400&height=400&query=${encodeURIComponent(modelName)}`,
           }),
         })
 
-        if (!response.ok) {
-          throw new Error("Failed to save model to database.")
-        }
-
-        setUploadingFiles((prev) => prev.filter((f) => f.name !== file.name))
-        toast({ title: `"${file.name}" uploaded successfully!` })
+        toast.success(`Successfully uploaded ${file.name}`)
       } catch (error) {
         console.error("Upload failed:", error)
-        toast({
-          title: `Upload failed for ${file.name}`,
-          description: error instanceof Error ? error.message : "Unknown error",
-          variant: "destructive",
-        })
+        toast.error(`Failed to upload ${file.name}`)
         setUploadingFiles((prev) => prev.filter((f) => f.name !== file.name))
       }
     }
-    mutate("/api/models")
+    mutate("/api/models") // Re-fetch the models list
+    setUploadingFiles([]) // Clear the uploading list
   }
 
-  const handleThumbnailUpload = async (event: React.ChangeEvent<HTMLInputElement>) => {
-    if (!event.target.files || !selectedModel) return
-    const file = event.target.files[0]
+  const handleModelUpdate = async (id: string, updates: Partial<Omit<Model, "id" | "created_at">>) => {
+    try {
+      const res = await fetch(`/api/models/${id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(updates),
+      })
+      if (!res.ok) throw new Error("Failed to update model")
+
+      const updatedModel = await res.json()
+      setSelectedModel(updatedModel)
+      mutate("/api/models") // Revalidate the list
+      toast.success("Model updated successfully!")
+    } catch (err) {
+      toast.error((err as Error).message)
+    }
+  }
+
+  const handleThumbnailUpload = async (file: File) => {
+    if (!selectedModel) return
+    toast.info(`Uploading thumbnail for ${selectedModel.name}...`)
     try {
       const newBlob = await upload(file.name, file, {
         access: "public",
         handleUploadUrl: "/api/upload",
       })
-      await handleUpdateModel({ thumbnailUrl: newBlob.url })
-      toast({ title: "Thumbnail updated!" })
-    } catch (error) {
-      console.error("Thumbnail upload failed:", error)
-      toast({ title: "Thumbnail upload failed", variant: "destructive" })
+      await handleModelUpdate(selectedModel.id, {
+        thumbnail_url: newBlob.url,
+      })
+    } catch (err) {
+      toast.error("Failed to upload thumbnail.")
     }
   }
 
-  const handleUpdateModel = async (updateData: Partial<Model>) => {
+  const handleDelete = async () => {
     if (!selectedModel) return
     try {
-      const response = await fetch(`/api/models/${selectedModel.id}`, {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(updateData),
-      })
-      if (!response.ok) throw new Error("Failed to update model")
-      mutate("/api/models")
-      if (updateData.name) {
-        setSelectedModel((prev) => (prev ? { ...prev, name: updateData.name! } : null))
-      }
-    } catch (error) {
-      console.error("Update failed:", error)
-      toast({ title: "Failed to update model", variant: "destructive" })
-    }
-  }
-
-  const handleDeleteModel = async () => {
-    if (!selectedModel) return
-    try {
-      const response = await fetch(`/api/models/${selectedModel.id}`, {
-        method: "DELETE",
-      })
-      if (!response.ok) throw new Error("Failed to delete model")
-      toast({ title: `"${selectedModel.name}" deleted.` })
+      await fetch(`/api/models/${selectedModel.id}`, { method: "DELETE" })
+      toast.success(`Deleted ${selectedModel.name}`)
       setSelectedModel(null)
       mutate("/api/models")
-    } catch (error) {
-      console.error("Delete failed:", error)
-      toast({ title: "Failed to delete model", variant: "destructive" })
+    } catch (err) {
+      toast.error("Failed to delete model.")
     }
   }
 
-  const handleDownloadModel = () => {
-    if (!selectedModel) return
-    const link = document.createElement("a")
-    link.href = selectedModel.url
-    link.download = selectedModel.name + ".glb"
-    document.body.appendChild(link)
-    link.click()
-    document.body.removeChild(link)
+  // --- Keyboard Navigation ---
+  const handleKeyDown = useCallback(
+    (event: KeyboardEvent) => {
+      if (!selectedModel) return
+
+      const currentIndex = models?.findIndex((m) => m.id === selectedModel.id)
+      if (currentIndex === undefined || currentIndex === -1 || !models) return
+
+      if (event.key === "Escape") {
+        setSelectedModel(null)
+      } else if (event.key === "ArrowRight") {
+        const nextIndex = (currentIndex + 1) % models.length
+        setSelectedModel(models[nextIndex])
+      } else if (event.key === "ArrowLeft") {
+        const prevIndex = (currentIndex - 1 + models.length) % models.length
+        setSelectedModel(models[prevIndex])
+      }
+    },
+    [selectedModel, models],
+  )
+
+  useEffect(() => {
+    window.addEventListener("keydown", handleKeyDown)
+    return () => {
+      window.removeEventListener("keydown", handleKeyDown)
+    }
+  }, [handleKeyDown])
+
+  // --- Render Logic ---
+
+  if (selectedModel) {
+    return (
+      <div className="w-full h-screen bg-black relative">
+        <Toaster richColors />
+        <Canvas camera={{ fov: 50, position: [0, 1, 5] }}>
+          <Suspense fallback={<Loader />}>
+            <Environment preset="city" />
+            <ambientLight intensity={0.2} />
+            <directionalLight position={[5, 5, 5]} intensity={lightIntensity} />
+            <ModelViewer modelUrl={selectedModel.model_url} materialMode={materialMode} />
+          </Suspense>
+          <OrbitControls enablePan={true} enableZoom={true} enableRotate={true} />
+        </Canvas>
+
+        {/* Top Left Controls */}
+        <div className="absolute top-4 left-4">
+          <Button
+            variant="ghost"
+            size="icon"
+            onClick={() => setSelectedModel(null)}
+            className="text-white hover:bg-gray-700 hover:text-white"
+          >
+            <ChevronLeft className="h-6 w-6" />
+          </Button>
+        </div>
+
+        {/* Top Right Controls (Settings) */}
+        <div className="absolute top-4 right-4">
+          <Sheet open={isSettingsOpen} onOpenChange={setIsSettingsOpen}>
+            <SheetTrigger asChild>
+              <Button variant="ghost" size="icon" className="text-white hover:bg-gray-700 hover:text-white">
+                <Settings className="h-6 w-6" />
+              </Button>
+            </SheetTrigger>
+            <SheetContent className="bg-gray-900 text-white border-l-gray-700 w-[350px] sm:w-[400px]">
+              <SettingsPanel
+                model={selectedModel}
+                onUpdate={handleModelUpdate}
+                onDelete={handleDelete}
+                onThumbnailUpload={handleThumbnailUpload}
+                lightIntensity={lightIntensity}
+                onLightIntensityChange={setLightIntensity}
+                bgColor={bgColor}
+                onBgColorChange={setBgColor}
+              />
+            </SheetContent>
+          </Sheet>
+        </div>
+
+        {/* Bottom Controls */}
+        <div className="absolute bottom-4 left-1/2 -translate-x-1/2 bg-gray-800/50 backdrop-blur-sm p-2 rounded-full flex items-center gap-2">
+          <Button
+            variant={materialMode === "pbr" ? "secondary" : "ghost"}
+            size="icon"
+            onClick={() => setMaterialMode("pbr")}
+            className="text-white rounded-full"
+          >
+            <Palette />
+          </Button>
+          <Button
+            variant={materialMode === "normal" ? "secondary" : "ghost"}
+            size="icon"
+            onClick={() => setMaterialMode("normal")}
+            className="text-white rounded-full"
+          >
+            <div className="w-6 h-6 rounded-full bg-gradient-to-br from-red-500 via-green-500 to-blue-500" />
+          </Button>
+          <Button
+            variant={materialMode === "white" ? "secondary" : "ghost"}
+            size="icon"
+            onClick={() => setMaterialMode("white")}
+            className="text-white rounded-full"
+          >
+            <div className="w-6 h-6 rounded-full bg-white" />
+          </Button>
+        </div>
+      </div>
+    )
   }
 
-  const renderGallery = () => (
-    <div className="flex h-screen bg-neutral-900 text-white">
-      <input type="file" ref={fileInputRef} onChange={handleUpload} className="hidden" accept=".glb,.gltf" multiple />
+  return (
+    <div className="bg-gray-900 text-white min-h-screen flex">
+      <Toaster richColors />
+      <input
+        type="file"
+        ref={fileInputRef}
+        onChange={(e) => handleUpload(e.target.files)}
+        className="hidden"
+        multiple
+        accept=".glb"
+      />
+
       {/* Sidebar */}
       <aside
-        className={`bg-neutral-950 p-4 flex flex-col transition-all duration-300 ${
-          isSidebarOpen ? "w-64" : "w-0 -translate-x-full"
-        } ${isMobile ? "absolute h-full z-20" : "relative"}`}
-      >
-        <div className="flex items-center justify-between mb-6">
-          <div className="flex items-center gap-2">
-            <PanelLeft />
-            <h1 className="font-bold text-lg">My Models</h1>
-          </div>
-        </div>
-        <Button
-          variant="ghost"
-          className="w-full justify-start gap-2 mb-2"
-          onClick={() => fileInputRef.current?.click()}
-        >
-          <Upload size={16} /> Upload
-        </Button>
-        <Button variant="secondary" className="w-full justify-start gap-2 mb-2">
-          <Folder size={16} /> Assets
-        </Button>
-        <Button variant="ghost" className="w-full justify-start gap-2 mb-4">
-          <Folder size={16} /> New folder
-        </Button>
-
-        {uploadingFiles.length > 0 && (
-          <div className="space-y-2 mt-auto">
-            <p className="text-sm font-medium">Uploading...</p>
-            {uploadingFiles.map((file, index) => (
-              <div key={index} className="text-xs text-neutral-400 flex items-center gap-2">
-                <Loader className="animate-spin" size={14} />
-                <span>{file.name}</span>
-              </div>
-            ))}
-          </div>
+        className={cn(
+          "bg-gray-950 p-4 flex-col md:flex md:w-64 transition-all duration-300 ease-in-out",
+          isSidebarOpen ? "flex w-64" : "hidden",
         )}
+      >
+        <div className="mb-8">
+          <h1 className="text-2xl font-bold">My Models</h1>
+        </div>
+        <nav className="flex flex-col gap-2">
+          <Button variant="ghost" className="justify-start gap-2" onClick={() => fileInputRef.current?.click()}>
+            <Upload className="h-5 w-5" /> Upload
+          </Button>
+          <Button variant="secondary" className="justify-start gap-2">
+            <Folder className="h-5 w-5" /> Assets
+          </Button>
+        </nav>
       </aside>
 
       {/* Main Content */}
       <main className="flex-1 p-4 md:p-8 overflow-y-auto">
-        {isMobile && (
-          <Button
-            variant="ghost"
-            size="icon"
-            className="absolute top-4 left-4 z-30"
-            onClick={() => setIsSidebarOpen(!isSidebarOpen)}
-          >
-            <Menu />
+        <div className="md:hidden mb-4 flex items-center justify-between">
+          <Button variant="ghost" size="icon" onClick={() => setIsSidebarOpen(!isSidebarOpen)}>
+            {isSidebarOpen ? <X /> : <Menu />}
           </Button>
+          <h1 className="text-xl font-bold">My Models</h1>
+        </div>
+
+        {isLoading && (
+          <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-4">
+            {Array.from({ length: 12 }).map((_, i) => (
+              <Skeleton key={i} className="aspect-square rounded-lg bg-gray-800" />
+            ))}
+          </div>
         )}
+
+        {error && <div className="text-center text-red-400">Failed to load models.</div>}
+
+        {!isLoading && models?.length === 0 && (
+          <div className="text-center text-gray-400 flex flex-col items-center justify-center h-full">
+            <Folder size={64} className="mb-4" />
+            <h2 className="text-2xl font-semibold">Your gallery is empty</h2>
+            <p className="mt-2">Click the upload button to add your first model.</p>
+            <Button className="mt-4" onClick={() => fileInputRef.current?.click()}>
+              <Upload className="mr-2 h-4 w-4" /> Upload Model
+            </Button>
+          </div>
+        )}
+
         <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-4">
-          {isLoading &&
-            Array.from({ length: 12 }).map((_, i) => <Skeleton key={i} className="aspect-square rounded-lg" />)}
-          {models && models.length > 0
-            ? models.map((model) => (
-                <Card
-                  key={model.id}
-                  className="bg-neutral-800 border-neutral-700 hover:bg-neutral-700 cursor-pointer"
-                  onClick={() => setSelectedModel(model)}
-                >
-                  <CardContent className="p-0 aspect-square">
-                    <img
-                      src={model.thumbnailUrl || "/placeholder.svg"}
-                      alt={model.name}
-                      className="w-full h-full object-cover rounded-t-lg"
-                      onError={(e) => {
-                        e.currentTarget.src = "/placeholder.svg?width=200&height=200"
-                      }}
-                    />
-                  </CardContent>
-                  <CardFooter className="p-2">
-                    <p className="text-xs truncate">{model.name}</p>
-                  </CardFooter>
-                </Card>
-              ))
-            : !isLoading && (
-                <div className="col-span-full text-center py-20 text-neutral-500">
-                  <p>Your gallery is empty.</p>
-                  <Button variant="link" className="text-blue-400" onClick={() => fileInputRef.current?.click()}>
-                    Upload your first model
-                  </Button>
-                </div>
-              )}
+          {uploadingFiles.map((file) => (
+            <div
+              key={file.name}
+              className="aspect-square rounded-lg bg-gray-800 flex flex-col items-center justify-center p-2"
+            >
+              <div className="w-full bg-gray-700 rounded-full h-2.5 mb-2">
+                <div className="bg-blue-600 h-2.5 rounded-full" style={{ width: `${file.progress}%` }}></div>
+              </div>
+              <p className="text-xs text-center truncate w-full">{file.name}</p>
+            </div>
+          ))}
+          {models?.map((model) => (
+            <div
+              key={model.id}
+              className="group relative aspect-square rounded-lg overflow-hidden cursor-pointer"
+              onClick={() => setSelectedModel(model)}
+            >
+              <img
+                src={model.thumbnail_url || "/placeholder.svg"}
+                alt={model.name}
+                className="w-full h-full object-cover transition-transform duration-300 group-hover:scale-110"
+                onError={(e) => {
+                  ;(e.target as HTMLImageElement).src = `/placeholder.svg?width=400&height=400&query=error`
+                }}
+              />
+              <div className="absolute inset-0 bg-black/50 opacity-0 group-hover:opacity-100 transition-opacity duration-300 flex items-end p-2">
+                <p className="text-sm font-semibold truncate">{model.name}</p>
+              </div>
+            </div>
+          ))}
         </div>
       </main>
     </div>
   )
+}
 
-  const renderViewer = () => (
-    <div className="h-screen w-screen bg-neutral-900 flex">
-      <input type="file" ref={thumbnailInputRef} onChange={handleThumbnailUpload} className="hidden" accept="image/*" />
-      {/* Back Button */}
-      <Button
-        variant="ghost"
-        size="icon"
-        className="absolute top-4 left-4 z-10 text-white"
-        onClick={() => setSelectedModel(null)}
-      >
-        <ChevronLeft />
-      </Button>
+// --- Settings Panel Component ---
 
-      {/* Viewer */}
-      <div className="flex-1 h-full relative">
-        {selectedModel && (
-          <Canvas shadows camera={{ position: [0, 1, 4], fov: 50 }}>
-            <ModelViewer
-              model={selectedModel}
-              renderMode={renderMode}
-              lightIntensity={lightIntensity}
-              bgColor={bgColor}
+function SettingsPanel({
+  model,
+  onUpdate,
+  onDelete,
+  onThumbnailUpload,
+  lightIntensity,
+  onLightIntensityChange,
+  bgColor,
+  onBgColorChange,
+}: {
+  model: Model
+  onUpdate: (id: string, updates: Partial<Omit<Model, "id" | "created_at">>) => void
+  onDelete: () => void
+  onThumbnailUpload: (file: File) => void
+  lightIntensity: number
+  onLightIntensityChange: (value: number) => void
+  bgColor: string
+  onBgColorChange: (value: string) => void
+}) {
+  const [name, setName] = useState(model.name)
+  const [showDeleteConfirm, setShowDeleteConfirm] = useState(false)
+  const thumbnailInputRef = useRef<HTMLInputElement>(null)
+
+  useEffect(() => {
+    setName(model.name)
+  }, [model.name])
+
+  const handleNameBlur = () => {
+    if (name !== model.name) {
+      onUpdate(model.id, { name })
+    }
+  }
+
+  return (
+    <div className="p-4 flex flex-col h-full">
+      <h2 className="text-2xl font-bold mb-6">Settings</h2>
+
+      <div className="space-y-6 flex-1">
+        <div>
+          <label className="text-sm font-medium text-gray-400">Thumbnail</label>
+          <div className="mt-2 relative aspect-square w-full rounded-lg overflow-hidden group">
+            <img
+              src={model.thumbnail_url || "/placeholder.svg"}
+              alt={model.name}
+              className="w-full h-full object-cover"
             />
-          </Canvas>
-        )}
-        {/* Bottom Controls */}
-        <div className="absolute bottom-4 left-1/2 -translate-x-1/2 flex items-center gap-2 bg-neutral-800/50 backdrop-blur-sm p-2 rounded-full text-white">
-          <Button
-            variant={renderMode === "pbr" ? "secondary" : "ghost"}
-            size="icon"
-            onClick={() => setRenderMode("pbr")}
-          >
-            <div className="w-5 h-5 rounded-full bg-gradient-to-br from-red-500 to-blue-500" />
-          </Button>
-          <Button
-            variant={renderMode === "normal" ? "secondary" : "ghost"}
-            size="icon"
-            onClick={() => setRenderMode("normal")}
-          >
-            <div className="w-5 h-5 rounded-full bg-gradient-to-br from-purple-500 via-pink-500 to-yellow-500" />
-          </Button>
-          <Button
-            variant={renderMode === "white" ? "secondary" : "ghost"}
-            size="icon"
-            onClick={() => setRenderMode("white")}
-          >
-            <div className="w-5 h-5 rounded-full bg-white border border-neutral-400" />
-          </Button>
-          <Button variant="ghost" size="icon" onClick={handleDownloadModel}>
-            <Download size={18} />
-          </Button>
+            <Button
+              variant="secondary"
+              size="sm"
+              className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 opacity-0 group-hover:opacity-100 transition-opacity"
+              onClick={() => thumbnailInputRef.current?.click()}
+            >
+              <ImageIcon className="mr-2 h-4 w-4" /> Change
+            </Button>
+            <input
+              type="file"
+              ref={thumbnailInputRef}
+              className="hidden"
+              accept="image/*"
+              onChange={(e) => e.target.files && onThumbnailUpload(e.target.files[0])}
+            />
+          </div>
+        </div>
+
+        <div>
+          <label htmlFor="model-name" className="text-sm font-medium text-gray-400">
+            Model Name
+          </label>
+          <div className="relative mt-2">
+            <Input
+              id="model-name"
+              value={name}
+              onChange={(e) => setName(e.target.value)}
+              onBlur={handleNameBlur}
+              onKeyDown={(e) => e.key === "Enter" && handleNameBlur()}
+              className="bg-gray-800 border-gray-700 text-white pr-8"
+            />
+            <Pencil className="absolute right-2 top-1/2 -translate-y-1/2 h-4 w-4 text-gray-500" />
+          </div>
+        </div>
+
+        <div>
+          <label className="text-sm font-medium text-gray-400">Light Intensity</label>
+          <Slider
+            value={[lightIntensity]}
+            onValueChange={(v) => onLightIntensityChange(v[0])}
+            min={0}
+            max={5}
+            step={0.1}
+            className="mt-2"
+          />
+        </div>
+
+        <div>
+          <label className="text-sm font-medium text-gray-400">Background Color</label>
+          <Input
+            type="color"
+            value={bgColor}
+            onChange={(e) => onBgColorChange(e.target.value)}
+            className="w-full h-10 p-1 mt-2 bg-gray-800 border-gray-700"
+          />
         </div>
       </div>
 
-      {/* Settings Panel */}
-      {isMobile && !isSettingsOpen && (
-        <Button
-          variant="ghost"
-          size="icon"
-          className="absolute top-4 right-4 z-10 text-white"
-          onClick={() => setIsSettingsOpen(true)}
-        >
-          <Settings />
+      <div className="mt-6">
+        <Button variant="destructive" className="w-full" onClick={() => setShowDeleteConfirm(true)}>
+          <Trash2 className="mr-2 h-4 w-4" /> Delete Model
         </Button>
-      )}
-      <aside
-        className={`bg-neutral-950 p-4 flex flex-col text-white transition-all duration-300 ${
-          isSettingsOpen ? "w-80" : "w-0 translate-x-full"
-        } ${isMobile ? "absolute right-0 h-full z-20" : "relative"}`}
-      >
-        <div className="flex items-center justify-between mb-6">
-          <h2 className="font-bold text-lg">Settings</h2>
-          <Button variant="ghost" size="icon" onClick={() => setIsSettingsOpen(false)}>
-            <X />
-          </Button>
-        </div>
-        {selectedModel && (
-          <div className="space-y-6 flex-1 overflow-y-auto">
-            <div>
-              <Label htmlFor="model-name">Name</Label>
-              <Input
-                id="model-name"
-                value={modelName}
-                onChange={(e) => setModelName(e.target.value)}
-                onBlur={() => handleUpdateModel({ name: modelName })}
-                className="bg-neutral-800 border-neutral-700"
-              />
-            </div>
-            <div>
-              <Label>Thumbnail</Label>
-              <div className="aspect-video rounded-lg bg-neutral-800 overflow-hidden relative group">
-                <img
-                  src={selectedModel.thumbnailUrl || "/placeholder.svg"}
-                  alt="Thumbnail"
-                  className="w-full h-full object-cover"
-                />
-                <Button
-                  variant="secondary"
-                  className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 opacity-0 group-hover:opacity-100 transition-opacity"
-                  onClick={() => thumbnailInputRef.current?.click()}
-                >
-                  Change
-                </Button>
-              </div>
-            </div>
-            <div>
-              <Label>Background Color</Label>
-              <div className="flex items-center gap-2">
-                <Input
-                  type="color"
-                  value={bgColor}
-                  onChange={(e) => setBgColor(e.target.value)}
-                  className="p-1 h-10 w-10 bg-transparent border-none"
-                />
-                <Input
-                  value={bgColor}
-                  onChange={(e) => setBgColor(e.target.value)}
-                  className="bg-neutral-800 border-neutral-700"
-                />
-              </div>
-            </div>
-            <div>
-              <Label>Light Intensity</Label>
-              <Slider
-                value={[lightIntensity]}
-                onValueChange={(v) => setLightIntensity(v[0])}
-                min={0}
-                max={5}
-                step={0.1}
-              />
-            </div>
-            <div className="pt-4 border-t border-neutral-800">
-              <Button variant="destructive" className="w-full" onClick={() => setShowDeleteConfirm(true)}>
-                <Trash2 size={16} className="mr-2" /> Delete Model
-              </Button>
-            </div>
-          </div>
-        )}
-      </aside>
-      <AlertDialog open={showDeleteConfirm} onOpenChange={setShowDeleteConfirm}>
-        <AlertDialogContent>
-          <AlertDialogHeader>
-            <AlertDialogTitle>Are you sure?</AlertDialogTitle>
-            <AlertDialogDescription>
-              This will permanently delete "{selectedModel?.name}" and cannot be undone.
-            </AlertDialogDescription>
-          </AlertDialogHeader>
-          <AlertDialogFooter>
-            <AlertDialogCancel>Cancel</AlertDialogCancel>
-            <AlertDialogAction onClick={handleDeleteModel}>Delete</AlertDialogAction>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
-    </div>
-  )
+      </div>
 
-  return (
-    <>
-      <Toaster />
-      {selectedModel ? renderViewer() : renderGallery()}
-    </>
+      <Dialog open={showDeleteConfirm} onOpenChange={setShowDeleteConfirm}>
+        <DialogContent className="bg-gray-900 text-white">
+          <DialogHeader>
+            <DialogTitle>Are you sure?</DialogTitle>
+            <DialogDescription className="text-gray-400">
+              This will permanently delete the model "{model.name}". This action cannot be undone.
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button variant="secondary" onClick={() => setShowDeleteConfirm(false)}>
+              Cancel
+            </Button>
+            <Button
+              variant="destructive"
+              onClick={() => {
+                onDelete()
+                setShowDeleteConfirm(false)
+              }}
+            >
+              Delete
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+    </div>
   )
 }

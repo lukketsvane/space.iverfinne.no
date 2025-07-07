@@ -1,16 +1,19 @@
 import { handleUpload, type HandleUploadBody } from "@vercel/blob/client"
 import { NextResponse } from "next/server"
 
+// This is the crucial line that ensures the function runs in a Node.js environment.
 export const runtime = "nodejs"
 
 export async function POST(request: Request): Promise<NextResponse> {
+  // The `handleUpload` function from Vercel's SDK requires the body to be parsed.
   const body = (await request.json()) as HandleUploadBody
 
   try {
     const jsonResponse = await handleUpload({
       body,
       request,
-      onBeforeGenerateToken: async (pathname: string) => {
+      onBeforeGenerateToken: async (pathname) => {
+        // This function generates the secure token for the client to upload the file.
         return {
           allowedContentTypes: [
             "model/gltf-binary",
@@ -20,17 +23,8 @@ export async function POST(request: Request): Promise<NextResponse> {
             "image/webp",
             "image/gif",
           ],
-          tokenPayload: JSON.stringify({
-            // Optional: pass any custom data to the onUploadCompleted callback.
-          }),
-        }
-      },
-      onUploadCompleted: async ({ blob, tokenPayload }) => {
-        console.log("Blob upload completed", blob, tokenPayload)
-        try {
-          // Server-side logic after upload completes
-        } catch (error) {
-          throw new Error("Could not run post-upload logic")
+          // We are not using the onUploadCompleted callback here.
+          // The client will handle updating the database after the upload finishes.
         }
       },
     })
