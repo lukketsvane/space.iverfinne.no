@@ -13,7 +13,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 
 import type React from "react"
 
-import { useState, useRef, useEffect, Suspense, useCallback, Fragment } from "react"
+import { useState, useRef, useEffect, Suspense, useCallback, Fragment, useMemo } from "react"
 import { Canvas } from "@react-three/fiber"
 import { useGLTF, OrbitControls, Environment, Html, useProgress } from "@react-three/drei"
 import {
@@ -109,16 +109,43 @@ function Loader() {
 }
 
 function ModelViewer({ modelUrl, materialMode }: { modelUrl: string; materialMode: "pbr" | "normal" | "white" }) {
-  const { scene } = useGLTF(modelUrl)
+  const gltf = useGLTF(modelUrl)
+  // Clone the scene to avoid mutating the cached GLTF data, and use useMemo to prevent re-cloning on every render.
+  const scene = useMemo(() => gltf.scene.clone(true), [gltf.scene])
+
+  // Store the original materials in a map, using useMemo so it only runs when the scene changes.
+  const originalMaterials = useMemo(() => {
+    const materialsMap = new Map<string, THREE.Material | THREE.Material[]>()
+    scene.traverse((child) => {
+      if ((child as THREE.Mesh).isMesh) {
+        materialsMap.set(child.uuid, (child as THREE.Mesh).material)
+      }
+    })
+    return materialsMap
+  }, [scene])
+
+  // Effect to apply the correct material based on the selected mode.
   useEffect(() => {
     scene.traverse((child) => {
       if ((child as THREE.Mesh).isMesh) {
         const mesh = child as THREE.Mesh
-        if (materialMode === "normal") mesh.material = new THREE.MeshNormalMaterial()
-        else if (materialMode === "white") mesh.material = new THREE.MeshStandardMaterial({ color: "white" })
+        if (materialMode === "pbr") {
+          // Restore the original material from our map.
+          const originalMaterial = originalMaterials.get(mesh.uuid)
+          if (originalMaterial) {
+            mesh.material = originalMaterial
+          }
+        } else if (materialMode === "normal") {
+          // Apply the normal material.
+          mesh.material = new THREE.MeshNormalMaterial()
+        } else if (materialMode === "white") {
+          // Apply a simple white material.
+          mesh.material = new THREE.MeshStandardMaterial({ color: "white" })
+        }
       }
     })
-  }, [scene, materialMode])
+  }, [scene, materialMode, originalMaterials]) // Re-run when mode or model changes.
+
   return <primitive object={scene} />
 }
 
@@ -233,7 +260,11 @@ function App() {
       }
       try {
         const sanitizedFilename = file.name.replace(/\s+/g, "_")
-        const newBlob = await upload(sanitizedFilename, file, { access: "public", handleUploadUrl: "/api/upload" })
+        const newBlob = await upload(sanitizedFilename, file, {
+          access: "public",
+          handleUploadUrl: "/api/upload",
+          clientPayload: JSON.stringify({ isThumbnail: false }), // Explicitly a new model
+        })
         const modelName = file.name.replace(/\.glb$/, "")
         await fetch("/api/models", {
           method: "POST",
@@ -248,6 +279,7 @@ function App() {
         toast.success(`Uploaded ${file.name}`)
       } catch (error) {
         toast.error(`Failed to upload ${file.name}`)
+        console.error(error)
       }
     })
     await Promise.all(uploadPromises)
@@ -357,11 +389,18 @@ function App() {
     if (!selectedModel) return
     toast.info(`Uploading thumbnail for ${selectedModel.name}...`)
     try {
-      const sanitizedFilename = file.name.replace(/\s+/g, "_")
-      const newBlob = await upload(sanitizedFilename, file, { access: "public", handleUploadUrl: "/api/upload" })
+      const fileExtension = file.name.split(".").pop() || "png"
+      const pathname = `thumbnails/${selectedModel.id}.${fileExtension}`
+
+      const newBlob = await upload(pathname, file, {
+        access: "public",
+        handleUploadUrl: "/api/upload",
+        clientPayload: JSON.stringify({ isThumbnail: true }), // Signal to overwrite
+      })
       await handleModelUpdate(selectedModel.id, { thumbnail_url: newBlob.url })
     } catch (err) {
       toast.error("Failed to upload thumbnail.")
+      console.error(err)
     }
   }
 
@@ -775,6 +814,15 @@ function App() {
                   </div>
                 </ItemContextMenu>
               ))}
+              {!isLoading && !searchQuery && (
+                <div
+                  onClick={() => fileInputRef.current?.click()}
+                  className="group relative aspect-square rounded-lg border-2 border-dashed border-muted-foreground/50 flex flex-col items-center justify-center text-muted-foreground hover:bg-muted hover:border-primary hover:text-primary transition-colors cursor-pointer"
+                >
+                  <Upload className="w-1/3 h-1/3 transition-transform group-hover:scale-110" />
+                  <p className="text-sm font-semibold mt-2">Upload Models</p>
+                </div>
+              )}
             </div>
           </main>
         </SidebarInset>

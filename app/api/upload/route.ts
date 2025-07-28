@@ -12,8 +12,14 @@ export async function POST(request: Request): Promise<NextResponse> {
     const jsonResponse = await handleUpload({
       body,
       request,
-      onBeforeGenerateToken: async (pathname) => {
-        // This function generates the secure token for the client to upload the file.
+      onBeforeGenerateToken: async (pathname, clientPayload) => {
+        const payload = clientPayload ? JSON.parse(clientPayload) : {}
+        const { isThumbnail } = payload
+
+        // If it's a thumbnail, we want to overwrite, so we disable the random suffix.
+        // If it's a model, we want a unique name, so we enable the random suffix.
+        const addRandomSuffix = isThumbnail === true ? false : true
+
         return {
           allowedContentTypes: [
             "model/gltf-binary",
@@ -23,6 +29,7 @@ export async function POST(request: Request): Promise<NextResponse> {
             "image/webp",
             "image/gif",
           ],
+          addRandomSuffix,
         }
       },
       // We are NOT using onUploadCompleted here. The client will handle database logic.
