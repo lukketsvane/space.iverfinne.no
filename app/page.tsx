@@ -10,9 +10,7 @@ import {
   ContextMenuSubContent,
 } from "@/components/ui/context-menu"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
-import { Accordion, AccordionItem, AccordionTrigger, AccordionContent } from "@/components/ui/accordion"
-import { Slider } from "@/components/ui/slider"
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
+import { Textarea } from "@/components/ui/textarea"
 
 import type React from "react"
 
@@ -26,7 +24,6 @@ import {
   ChevronLeft,
   Palette,
   Trash2,
-  ImageIcon,
   Pencil,
   MoreVertical,
   FolderPlus,
@@ -38,6 +35,7 @@ import {
   ChevronDown,
   ListFilter,
   LoaderIcon,
+  Info,
 } from "lucide-react"
 import { upload } from "@vercel/blob/client"
 import useSWR, { useSWRConfig } from "swr"
@@ -97,11 +95,13 @@ interface Folder {
   name: string
   parent_id: string | null
   created_at: string
+  description?: string
 }
 
 interface GalleryContents {
   folders: Folder[]
   models: Model[]
+  currentFolder: Folder | null
 }
 
 interface Light {
@@ -193,6 +193,7 @@ function GalleryPage() {
   const [uploadingFiles, setUploadingFiles] = useState<{ name: string; progress: number }[]>([])
   const [isNewFolderDialogOpen, setIsNewFolderDialogOpen] = useState(false)
   const [renameItem, setRenameItem] = useState<{ id: string; name: string; type: "folder" | "model" } | null>(null)
+  const [editingFolder, setEditingFolder] = useState<Folder | null>(null)
 
   // Viewer settings state
   const [materialMode, setMaterialMode] = useState<"pbr" | "normal" | "white">("pbr")
@@ -344,6 +345,20 @@ function GalleryPage() {
     document.body.appendChild(link)
     link.click()
     document.body.removeChild(link)
+  }
+
+  const handleSaveFolderDescription = async (description: string) => {
+    if (!editingFolder) return
+
+    await fetch(`/api/folders/${editingFolder.id}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ description }),
+    })
+
+    toast.success("Folder description saved.")
+    mutate(galleryUrl) // Re-fetch gallery data
+    setEditingFolder(null)
   }
 
   const handleViewerKeyDown = useCallback(
@@ -535,8 +550,21 @@ function GalleryPage() {
 
   const filteredFolders =
     gallery?.folders?.filter((folder) => folder.name.toLowerCase().includes(searchQuery.toLowerCase())) ?? []
-  const filteredModels =
-    gallery?.models?.filter((model) => model.name.toLowerCase().includes(searchQuery.toLowerCase())) ?? []
+
+  const folderDescription = gallery?.currentFolder?.description?.toLowerCase() || ""
+
+  const filteredModels = useMemo(() => {
+    if (!gallery?.models) return []
+    if (!searchQuery) return gallery.models
+
+    const lowerCaseQuery = searchQuery.toLowerCase()
+
+    return gallery.models.filter((model) => {
+      const modelNameMatch = model.name.toLowerCase().includes(lowerCaseQuery)
+      const folderDescriptionMatch = folderDescription.includes(lowerCaseQuery)
+      return modelNameMatch || folderDescriptionMatch
+    })
+  }, [gallery, searchQuery, folderDescription])
 
   return (
     <div className="bg-background text-foreground">
@@ -596,6 +624,16 @@ function GalleryPage() {
                   >
                     {crumb.name}
                   </button>
+                  {index === breadcrumbs.length - 1 && gallery?.currentFolder && (
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      className="h-6 w-6 ml-1"
+                      onClick={() => setEditingFolder(gallery.currentFolder)}
+                    >
+                      <Info className="h-4 w-4" />
+                    </Button>
+                  )}
                   {index < breadcrumbs.length - 1 && <ChevronRight className="h-4 w-4 mx-1 text-muted-foreground" />}
                 </Fragment>
               ))}
@@ -755,6 +793,14 @@ function GalleryPage() {
       {renameItem && (
         <RenameDialog item={renameItem} onOpenChange={() => setRenameItem(null)} onRename={handleRename} />
       )}
+      {editingFolder && (
+        <FolderDescriptionDialog
+          folder={editingFolder}
+          open={!!editingFolder}
+          onOpenChange={() => setEditingFolder(null)}
+          onSave={handleSaveFolderDescription}
+        />
+      )}
     </div>
   )
 }
@@ -774,11 +820,6 @@ export default function HomePage() {
 }
 
 // --- UI Components (Menu, Dialogs, SettingsPanel) ---
-// These components remain largely the same as before, with minor adjustments if needed.
-// For brevity, I'm keeping the existing implementations of ItemContextMenu, NewFolderDialog, RenameDialog, and SettingsPanel.
-// The props passed to SettingsPanel are already updated in the main component.
-// The definitions for MenuItems, Dialogs, and SettingsPanel are omitted here but should be the same as the previous version.
-// The definitions for MenuItems, Dialogs, and SettingsPanel are omitted here but should be the same as the previous version.
 const MoveToSubMenuContent = ({ onMove, allFolders, currentItem }: Omit<MenuItemsProps, "onRename" | "onDelete">) => (
   <>
     {currentItem.parent_id !== null && (
@@ -998,6 +1039,60 @@ function RenameDialog({
   )
 }
 
+function FolderDescriptionDialog({
+  folder,
+  open,
+  onOpenChange,
+  onSave,
+}: {
+  folder: Folder
+  open: boolean
+  onOpenChange: (open: boolean) => void
+  onSave: (description: string) => void
+}) {
+  const [description, setDescription] = useState(folder.description || "")
+  const wordCount = description.trim() ? description.trim().split(/\s+/).length : 0
+
+  const handleSave = () => {
+    if (wordCount <= 150) {
+      onSave(description)
+    } else {
+      toast.error("Description cannot exceed 150 words.")
+    }
+  }
+
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="bg-black/50 backdrop-blur-sm border-white/20 text-white">
+        <DialogHeader>
+          <DialogTitle>Edit Description for "{folder.name}"</DialogTitle>
+          <DialogDescription className="text-gray-400">
+            Add a description or comma-separated tags. This will be used for searching models within this folder.
+          </DialogDescription>
+        </DialogHeader>
+        <Textarea
+          value={description}
+          onChange={(e) => setDescription(e.target.value)}
+          placeholder="e.g. sci-fi, characters, hard-surface"
+          className="bg-white/10 border-white/20 min-h-[120px]"
+          rows={5}
+        />
+        <div className={`text-right text-sm ${wordCount > 150 ? "text-destructive" : "text-muted-foreground"}`}>
+          {wordCount} / 150 words
+        </div>
+        <DialogFooter>
+          <Button variant="secondary" onClick={() => onOpenChange(false)}>
+            Cancel
+          </Button>
+          <Button onClick={handleSave} disabled={wordCount > 150}>
+            Save
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  )
+}
+
 function EditableValue({
   value,
   onSave,
@@ -1146,67 +1241,18 @@ function SettingsPanel({
   return (
     <div className="px-4 pb-4 flex flex-col h-full text-white overflow-y-auto">
       <div className="space-y-4 flex-1 overflow-y-auto pr-2">
-        <div>
-          <label className="text-sm font-medium text-gray-400">Thumbnail</label>
-          <div className="mt-2 relative aspect-video w-full rounded-lg overflow-hidden group bg-white/10">
-            <img
-              src={model.thumbnail_url || "/placeholder.svg"}
-              alt={model.name}
-              className="w-full h-full object-cover"
-            />
-            <Button
-              variant="secondary"
-              size="sm"
-              className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 opacity-0 group-hover:opacity-100 transition-opacity"
-              onClick={() => thumbnailInputRef.current?.click()}
-            >
-              <ImageIcon className="mr-2 h-4 w-4" /> Change
-            </Button>
-            <input
-              type="file"
-              ref={thumbnailInputRef}
-              className="hidden"
-              accept="image/*"
-              onChange={(e) => e.target.files && onThumbnailUpload(e.target.files[0])}
-            />
-          </div>
+        <div className="flex items-center justify-between">
+          <h3 className="text-sm font-semibold">Name</h3>
+          <EditableValue value={Number.parseFloat(name)} onSave={handleNameBlur} />
         </div>
-        <div>
-          <label htmlFor="model-name" className="text-sm font-medium text-gray-400">
-            Model Name
-          </label>
-          <div className="relative mt-2">
-            <Input
-              id="model-name"
-              value={name}
-              onChange={(e) => setName(e.target.value)}
-              onBlur={handleNameBlur}
-              onKeyDown={(e) => e.key === "Enter" && (e.target as HTMLInputElement).blur()}
-              className="bg-white/10 border-white/20 text-white pr-8"
-            />
-            <Pencil className="absolute right-2.5 top-1/2 -translate-y-1/2 h-4 w-4 text-gray-500" />
-          </div>
-        </div>
-        <div>
-          <label htmlFor="folder-select" className="text-sm font-medium text-gray-400">
-            Folder
-          </label>
+        <div className="flex items-center justify-between">
+          <h3 className="text-sm font-semibold">Folder</h3>
           <Select value={model.folder_id || "root"} onValueChange={handleFolderChange}>
-            <SelectTrigger id="folder-select" className="mt-2 bg-white/10 border-white/20 text-white">
-              <SelectValue placeholder="Select a folder" />
+            <SelectTrigger className="bg-white/10 border-white/30">
+              <SelectValue placeholder="Select folder" />
             </SelectTrigger>
-            <SelectContent className="bg-neutral-900 border-white/20 text-white">
+            <SelectContent>
               <SelectItem value="root">Assets (Root)</SelectItem>
-              {foldersError && (
-                <SelectItem value="error" disabled>
-                  Error loading folders
-                </SelectItem>
-              )}
-              {!allFolders && !foldersError && (
-                <SelectItem value="loading" disabled>
-                  Loading...
-                </SelectItem>
-              )}
               {allFolders?.map((folder) => (
                 <SelectItem key={folder.id} value={folder.id}>
                   {folder.name}
@@ -1215,197 +1261,114 @@ function SettingsPanel({
             </SelectContent>
           </Select>
         </div>
-
-        <Separator className="bg-white/20" />
-
-        <div>
-          <label className="text-sm font-medium text-gray-400">Lighting</label>
-          <Accordion type="multiple" defaultValue={["light-0", "light-1", "light-2"]} className="w-full mt-2">
-            {lights.map((light, index) => {
-              const color = kelvinToRgb(light.kelvin)
-              const colorStyle = `rgb(${color.r * 255}, ${color.g * 255}, ${color.b * 255})`
-              return (
-                <AccordionItem key={light.id} value={`light-${index}`} className="border-b-white/10">
-                  <div className="flex items-center w-full">
-                    <AccordionTrigger className="flex-1 text-left py-3">
-                      <div className="flex items-center justify-between w-full">
-                        <div className="flex items-center gap-2">
-                          <div
-                            className="w-4 h-4 rounded-full border border-white/20"
-                            style={{ backgroundColor: colorStyle }}
-                          />
-                          <span>Light {index + 1}</span>
-                        </div>
-                        {index === 0 && <span className="text-xs font-normal text-gray-400">(Shift+Drag)</span>}
-                      </div>
-                    </AccordionTrigger>
-                    {lights.length > 1 && (
-                      <div className="pl-2">
-                        <Button
-                          variant="ghost"
-                          size="icon"
-                          className="h-8 w-8 text-gray-400 hover:bg-white/20 hover:text-white"
-                          onClick={(e) => {
-                            e.stopPropagation()
-                            removeLight(light.id)
-                          }}
-                        >
-                          <Trash2 className="h-4 w-4" />
-                        </Button>
-                      </div>
-                    )}
-                  </div>
-                  <AccordionContent className="pt-2 pb-4 space-y-4">
-                    <div>
-                      <div className="flex justify-between items-center mb-1">
-                        <label className="text-xs text-gray-400">Intensity</label>
-                        <EditableValue
-                          value={light.intensity}
-                          onSave={(newValue) => handleLightChange(light.id, { intensity: newValue })}
-                        />
-                      </div>
-                      <Slider
-                        value={[light.intensity]}
-                        onValueChange={(value) => handleLightChange(light.id, { intensity: value[0] })}
-                        min={0}
-                        max={10}
-                        step={0.1}
-                      />
-                    </div>
-                    <div>
-                      <div className="flex justify-between items-center mb-1">
-                        <label className="text-xs text-gray-400">Temperature</label>
-                        <EditableValue
-                          value={light.kelvin}
-                          onSave={(newValue) => handleLightChange(light.id, { kelvin: newValue })}
-                          units="K"
-                        />
-                      </div>
-                      <Slider
-                        value={[light.kelvin]}
-                        onValueChange={(value) => handleLightChange(light.id, { kelvin: value[0] })}
-                        min={1000}
-                        max={12000}
-                        step={100}
-                      />
-                    </div>
-                    <div>
-                      <div className="flex justify-between items-center mb-1">
-                        <label className="text-xs text-gray-400">Decay</label>
-                        <EditableValue
-                          value={light.decay}
-                          onSave={(newValue) => handleLightChange(light.id, { decay: newValue })}
-                        />
-                      </div>
-                      <Slider
-                        value={[light.decay]}
-                        onValueChange={(value) => handleLightChange(light.id, { decay: value[0] })}
-                        min={0}
-                        max={2}
-                        step={0.1}
-                      />
-                    </div>
-                  </AccordionContent>
-                </AccordionItem>
-              )
-            })}
-          </Accordion>
-          {lights.length < 3 && (
-            <Button variant="outline" className="w-full mt-4 bg-white/10 border-white/20" onClick={addLight}>
-              Add Light
+        <div className="flex items-center justify-between">
+          <h3 className="text-sm font-semibold">Lights</h3>
+          <div className="flex gap-2">
+            {lights.map((light) => (
+              <div key={light.id} className="flex flex-col items-center">
+                <EditableValue
+                  value={light.position[0]}
+                  onSave={(newValue) =>
+                    handleLightChange(light.id, { position: [newValue, light.position[1], light.position[2]] })
+                  }
+                  units="m"
+                />
+                <EditableValue
+                  value={light.position[1]}
+                  onSave={(newValue) =>
+                    handleLightChange(light.id, { position: [light.position[0], newValue, light.position[2]] })
+                  }
+                  units="m"
+                />
+                <EditableValue
+                  value={light.position[2]}
+                  onSave={(newValue) =>
+                    handleLightChange(light.id, { position: [light.position[0], light.position[1], newValue] })
+                  }
+                  units="m"
+                />
+                <EditableValue
+                  value={light.intensity}
+                  onSave={(newValue) => handleLightChange(light.id, { intensity: newValue })}
+                  units="lx"
+                />
+                <EditableValue
+                  value={light.kelvin}
+                  onSave={(newValue) => handleLightChange(light.id, { kelvin: newValue })}
+                  units="K"
+                />
+                <EditableValue
+                  value={light.decay}
+                  onSave={(newValue) => handleLightChange(light.id, { decay: newValue })}
+                />
+                <Button variant="ghost" size="icon" onClick={() => removeLight(light.id)}>
+                  <Trash2 className="h-4 w-4" />
+                </Button>
+              </div>
+            ))}
+            <Button variant="ghost" size="icon" onClick={addLight}>
+              <FolderPlus className="h-4 w-4" />
             </Button>
-          )}
+          </div>
         </div>
-
-        <Separator className="bg-white/20" />
-
-        <div>
-          <label className="text-sm font-medium text-gray-400">Background</label>
-          <Tabs value={bgType} onValueChange={(value) => onBgTypeChange(value as any)} className="w-full mt-2">
-            <TabsList className="grid w-full grid-cols-3 bg-white/10">
-              <TabsTrigger value="color">Color</TabsTrigger>
-              <TabsTrigger value="gradient">Gradient</TabsTrigger>
-              <TabsTrigger value="image">Image</TabsTrigger>
-            </TabsList>
-            <TabsContent value="color" className="mt-4">
-              <Input
+        <div className="flex items-center justify-between">
+          <h3 className="text-sm font-semibold">Background Type</h3>
+          <Select value={bgType} onValueChange={onBgTypeChange}>
+            <SelectTrigger className="bg-white/10 border-white/30">
+              <SelectValue placeholder="Select background type" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="color">Color</SelectItem>
+              <SelectItem value="gradient">Gradient</SelectItem>
+              <SelectItem value="image">Image</SelectItem>
+            </SelectContent>
+          </Select>
+        </div>
+        {bgType === "color" && (
+          <div className="flex items-center justify-between">
+            <h3 className="text-sm font-semibold">Background Color</h3>
+            <input
+              type="color"
+              value={bgColor1}
+              onChange={(e) => onBgColor1Change(e.target.value)}
+              className="w-10 h-10"
+            />
+          </div>
+        )}
+        {bgType === "gradient" && (
+          <>
+            <div className="flex items-center justify-between">
+              <h3 className="text-sm font-semibold">Gradient Color 1</h3>
+              <input
                 type="color"
                 value={bgColor1}
                 onChange={(e) => onBgColor1Change(e.target.value)}
-                className="w-full h-10 p-1 bg-white/10 border-white/20"
+                className="w-10 h-10"
               />
-            </TabsContent>
-            <TabsContent value="gradient" className="mt-4 space-y-2">
-              <Input
-                type="color"
-                value={bgColor1}
-                onChange={(e) => onBgColor1Change(e.target.value)}
-                className="w-full h-10 p-1 bg-white/10 border-white/20"
-              />
-              <Input
+            </div>
+            <div className="flex items-center justify-between">
+              <h3 className="text-sm font-semibold">Gradient Color 2</h3>
+              <input
                 type="color"
                 value={bgColor2}
                 onChange={(e) => onBgColor2Change(e.target.value)}
-                className="w-full h-10 p-1 bg-white/10 border-white/20"
+                className="w-10 h-10"
               />
-            </TabsContent>
-            <TabsContent value="image" className="mt-4">
-              <input
-                type="file"
-                ref={bgImageInputRef}
-                className="hidden"
-                accept="image/*"
-                onChange={handleBgImageUpload}
-              />
-              <Button
-                variant="outline"
-                className="w-full bg-white/10 border-white/20"
-                onClick={() => bgImageInputRef.current?.click()}
-              >
-                Upload Image
-              </Button>
-              {bgImage && (
-                <div className="mt-2 relative aspect-video w-full rounded-lg overflow-hidden group bg-white/10">
-                  <img
-                    src={bgImage || "/placeholder.svg"}
-                    alt="Background preview"
-                    className="w-full h-full object-cover"
-                  />
-                </div>
-              )}
-            </TabsContent>
-          </Tabs>
-        </div>
+            </div>
+          </>
+        )}
+        {bgType === "image" && (
+          <div className="flex items-center justify-between">
+            <h3 className="text-sm font-semibold">Background Image</h3>
+            <input
+              type="file"
+              ref={bgImageInputRef}
+              onChange={(e) => handleBgImageUpload(e)}
+              className="bg-white/10 border-white/30"
+            />
+          </div>
+        )}
       </div>
-      <div className="mt-6 pt-4 border-t border-white/20">
-        <Button variant="destructive" className="w-full" onClick={() => setShowDeleteConfirm(true)}>
-          <Trash2 className="mr-2 h-4 w-4" /> Delete Model
-        </Button>
-      </div>
-      <Dialog open={showDeleteConfirm} onOpenChange={setShowDeleteConfirm}>
-        <DialogContent className="bg-black/50 backdrop-blur-sm border-white/20 text-white">
-          <DialogHeader>
-            <DialogTitle>Are you sure?</DialogTitle>
-            <DialogDescription className="text-gray-400">
-              This will permanently delete the model "{model.name}". This action cannot be undone.
-            </DialogDescription>
-          </DialogHeader>
-          <DialogFooter>
-            <Button variant="secondary" onClick={() => setShowDeleteConfirm(false)}>
-              Cancel
-            </Button>
-            <Button
-              variant="destructive"
-              onClick={() => {
-                onDelete()
-                setShowDeleteConfirm(false)
-              }}
-            >
-              Delete
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
     </div>
   )
 }

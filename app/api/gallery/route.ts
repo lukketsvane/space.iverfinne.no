@@ -13,6 +13,16 @@ export async function GET(request: Request) {
   const ascending = sortOrder === "asc"
 
   try {
+    let currentFolder = null
+    if (folderId) {
+      const { data, error } = await supabase.from("folders").select("*").eq("id", folderId).single()
+      if (error) {
+        console.error("Error fetching current folder:", error)
+      } else {
+        currentFolder = data
+      }
+    }
+
     // Folders are always sorted by name
     const foldersQuery = supabase.from("folders").select("*").order("name", { ascending: true })
 
@@ -37,6 +47,7 @@ export async function GET(request: Request) {
     return NextResponse.json({
       folders: foldersRes.data,
       models: modelsRes.data,
+      currentFolder,
     })
   } catch (error) {
     const message = error instanceof Error ? error.message : "Unknown error"
