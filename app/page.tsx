@@ -15,7 +15,7 @@ import type React from "react"
 
 import { useState, useRef, useEffect, Suspense, useCallback, Fragment, useMemo } from "react"
 import { Canvas } from "@react-three/fiber"
-import { useGLTF, OrbitControls, Environment, Html, useProgress } from "@react-three/drei"
+import { useGLTF, OrbitControls, Html, useProgress } from "@react-three/drei"
 import {
   Upload,
   FolderIcon,
@@ -72,6 +72,8 @@ import {
   SidebarTrigger,
 } from "@/components/ui/sidebar"
 import { Separator } from "@/components/ui/separator"
+import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from "@/components/ui/accordion"
+import { kelvinToRgb } from "@/lib/utils"
 
 // --- Type Definitions ---
 interface Model {
@@ -93,6 +95,13 @@ interface Folder {
 interface GalleryContents {
   folders: Folder[]
   models: Model[]
+}
+
+interface Light {
+  id: number
+  position: [number, number, number]
+  intensity: number
+  kelvin: number
 }
 
 // --- Data Fetching ---
@@ -170,7 +179,7 @@ function App() {
   // Viewer settings state
   const [materialMode, setMaterialMode] = useState<"pbr" | "normal" | "white">("pbr")
   const [bgColor, setBgColor] = useState("#000000")
-  const [lightIntensity, setLightIntensity] = useState(1)
+  const [lights, setLights] = useState<Light[]>([{ id: Date.now(), position: [5, 5, 5], intensity: 1.5, kelvin: 6500 }])
   const [isSettingsOpen, setIsSettingsOpen] = useState(false)
   const [isDragging, setIsDragging] = useState(false)
   const [isSettingsPanelOpen, setIsSettingsPanelOpen] = useState(true)
@@ -183,7 +192,6 @@ function App() {
 
   const fileInputRef = useRef<HTMLInputElement>(null)
 
-  const [lightPosition, setLightPosition] = useState<[number, number, number]>([5, 5, 5])
   const [isOrbitControlsEnabled, setIsOrbitControlsEnabled] = useState(true)
   const isMovingLight = useRef(false)
   const dragStartRef = useRef<{ x: number; y: number } | null>(null)
@@ -192,7 +200,7 @@ function App() {
   // --- Event Handlers & Actions ---
 
   const handlePanelDragStart = (e: React.PointerEvent<HTMLDivElement>) => {
-    if ((e.target as HTMLElement).closest("button")) {
+    if ((e.target as HTMLElement).closest("button, input, .slider-thumb")) {
       return
     }
     e.preventDefault()
@@ -436,7 +444,7 @@ function App() {
   )
 
   const handlePointerDown = (e: React.PointerEvent) => {
-    if (e.shiftKey) {
+    if (e.shiftKey && lights.length > 0) {
       isMovingLight.current = true
       setIsOrbitControlsEnabled(false)
       dragStartRef.current = { x: e.clientX, y: e.clientY }
@@ -445,16 +453,22 @@ function App() {
   }
 
   const handlePointerMove = (e: React.PointerEvent) => {
-    if (isMovingLight.current && dragStartRef.current) {
+    if (isMovingLight.current && dragStartRef.current && lights.length > 0) {
       const deltaX = e.clientX - dragStartRef.current.x
       const deltaY = e.clientY - dragStartRef.current.y
 
       const sensitivity = 0.05
-      setLightPosition((prev) => [
-        prev[0] + deltaX * sensitivity,
-        prev[1] - deltaY * sensitivity, // Y is inverted in screen coordinates
-        prev[2],
-      ])
+      setLights((prevLights) => {
+        const newLights = [...prevLights]
+        const mainLight = { ...newLights[0] }
+        mainLight.position = [
+          mainLight.position[0] + deltaX * sensitivity,
+          mainLight.position[1] - deltaY * sensitivity,
+          mainLight.position[2],
+        ]
+        newLights[0] = mainLight
+        return newLights
+      })
 
       dragStartRef.current = { x: e.clientX, y: e.clientY }
     }
@@ -476,7 +490,7 @@ function App() {
 
   useEffect(() => {
     if (selectedModel && !tipShown.current) {
-      toast.info("Pro-tip: Hold Shift and drag to move the light source.", {
+      toast.info("Pro-tip: Hold Shift and drag to move the main light source.", {
         duration: 5000,
       })
       tipShown.current = true
@@ -550,9 +564,17 @@ function App() {
           onPointerLeave={handlePointerUp}
         >
           <Suspense fallback={<Loader />}>
-            <Environment preset="city" />
-            <ambientLight intensity={0.2} />
-            <directionalLight position={lightPosition} intensity={lightIntensity} />
+            {lights.map((light) => {
+              const color = kelvinToRgb(light.kelvin)
+              return (
+                <directionalLight
+                  key={light.id}
+                  position={light.position}
+                  intensity={light.intensity}
+                  color={[color.r, color.g, color.b]}
+                />
+              )
+            })}
             <ModelViewer modelUrl={selectedModel.model_url} materialMode={materialMode} />
           </Suspense>
           <OrbitControls enabled={isOrbitControlsEnabled} enablePan={true} enableZoom={true} enableRotate={true} />
@@ -597,8 +619,8 @@ function App() {
                 handleDeleteItem({ id: selectedModel.id, type: "model" }).then(() => setSelectedModel(null))
               }
               onThumbnailUpload={handleThumbnailUpload}
-              lightIntensity={lightIntensity}
-              onLightIntensityChange={setLightIntensity}
+              lights={lights}
+              onLightsChange={setLights}
               bgColor={bgColor}
               onBgColorChange={setBgColor}
             />
@@ -1069,8 +1091,8 @@ function SettingsPanel({
   onUpdate,
   onDelete,
   onThumbnailUpload,
-  lightIntensity,
-  onLightIntensityChange,
+  lights,
+  onLightsChange,
   bgColor,
   onBgColorChange,
 }: {
@@ -1078,8 +1100,8 @@ function SettingsPanel({
   onUpdate: (id: string, updates: Partial<Omit<Model, "id" | "created_at">>) => void
   onDelete: () => void
   onThumbnailUpload: (file: File) => void
-  lightIntensity: number
-  onLightIntensityChange: (value: number) => void
+  lights: Light[]
+  onLightsChange: (lights: Light[]) => void
   bgColor: string
   onBgColorChange: (value: string) => void
 }) {
@@ -1103,9 +1125,31 @@ function SettingsPanel({
     toast.success(`Moved "${model.name}" to a new folder.`)
   }
 
+  const handleLightChange = (id: number, newValues: Partial<Omit<Light, "id">>) => {
+    onLightsChange(lights.map((light) => (light.id === id ? { ...light, ...newValues } : light)))
+  }
+
+  const addLight = () => {
+    if (lights.length < 3) {
+      const newLight: Light = {
+        id: Date.now(),
+        position: [-5, 5, -5],
+        intensity: 1,
+        kelvin: 5500,
+      }
+      onLightsChange([...lights, newLight])
+    }
+  }
+
+  const removeLight = (id: number) => {
+    if (lights.length > 1) {
+      onLightsChange(lights.filter((light) => light.id !== id))
+    }
+  }
+
   return (
     <div className="px-4 pb-4 flex flex-col h-full text-white">
-      <div className="space-y-6 flex-1 overflow-y-auto pr-2">
+      <div className="space-y-4 flex-1 overflow-y-auto pr-2">
         <div>
           <label className="text-sm font-medium text-gray-400">Thumbnail</label>
           <div className="mt-2 relative aspect-video w-full rounded-lg overflow-hidden group bg-white/10">
@@ -1175,17 +1219,79 @@ function SettingsPanel({
             </SelectContent>
           </Select>
         </div>
+
+        <Separator className="bg-white/20" />
+
         <div>
-          <label className="text-sm font-medium text-gray-400">Light Intensity</label>
-          <Slider
-            value={[lightIntensity]}
-            onValueChange={(v) => onLightIntensityChange(v[0])}
-            min={0}
-            max={5}
-            step={0.1}
-            className="mt-2"
-          />
+          <label className="text-sm font-medium text-gray-400">Lighting</label>
+          <Accordion type="multiple" defaultValue={["light-0"]} className="w-full mt-2">
+            {lights.map((light, index) => {
+              const color = kelvinToRgb(light.kelvin)
+              const colorStyle = `rgb(${color.r * 255}, ${color.g * 255}, ${color.b * 255})`
+              return (
+                <AccordionItem key={light.id} value={`light-${index}`} className="border-b-white/10">
+                  <AccordionTrigger>
+                    <div className="flex items-center justify-between w-full">
+                      <div className="flex items-center gap-2">
+                        <div
+                          className="w-4 h-4 rounded-full border border-white/20"
+                          style={{ backgroundColor: colorStyle }}
+                        />
+                        <span>Light {index + 1}</span>
+                      </div>
+                      <div className="flex items-center">
+                        {index === 0 && <span className="text-xs font-normal text-gray-400 mr-2">(Shift+Drag)</span>}
+                        {lights.length > 1 && (
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            className="h-6 w-6 text-gray-400 hover:bg-white/20 hover:text-white"
+                            onClick={(e) => {
+                              e.stopPropagation()
+                              removeLight(light.id)
+                            }}
+                          >
+                            <Trash2 className="h-4 w-4" />
+                          </Button>
+                        )}
+                      </div>
+                    </div>
+                  </AccordionTrigger>
+                  <AccordionContent className="pt-2 space-y-4">
+                    <div>
+                      <label className="text-xs text-gray-400">Intensity</label>
+                      <Slider
+                        value={[light.intensity]}
+                        onValueChange={(v) => handleLightChange(light.id, { intensity: v[0] })}
+                        min={0}
+                        max={5}
+                        step={0.1}
+                      />
+                    </div>
+                    <div>
+                      <label className="text-xs text-gray-400">Color Temperature ({light.kelvin}K)</label>
+                      <Slider
+                        value={[light.kelvin]}
+                        onValueChange={(v) => handleLightChange(light.id, { kelvin: v[0] })}
+                        min={1000}
+                        max={12000}
+                        step={100}
+                      />
+                    </div>
+                  </AccordionContent>
+                </AccordionItem>
+              )
+            })}
+          </Accordion>
+          {lights.length < 3 && (
+            <Button variant="outline" className="w-full mt-4 bg-white/10 border-white/20" onClick={addLight}>
+              Add Light
+            </Button>
+          )}
         </div>
+
+        <Separator className="bg-white/20" />
+
         <div>
           <label className="text-sm font-medium text-gray-400">Background Color</label>
           <Input
@@ -1196,7 +1302,7 @@ function SettingsPanel({
           />
         </div>
       </div>
-      <div className="mt-6 pt-6 border-t border-white/20">
+      <div className="mt-6 pt-4 border-t border-white/20">
         <Button variant="destructive" className="w-full" onClick={() => setShowDeleteConfirm(true)}>
           <Trash2 className="mr-2 h-4 w-4" /> Delete Model
         </Button>
