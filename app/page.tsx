@@ -14,7 +14,7 @@ import { Textarea } from "@/components/ui/textarea"
 
 import type React from "react"
 
-import { useState, useRef, useEffect, Suspense, useCallback, Fragment, useMemo } from "react"
+import { useState, useRef, useEffect, Suspense, useCallback, Fragment } from "react"
 import { useRouter, useSearchParams } from "next/navigation"
 import { Canvas } from "@react-three/fiber"
 import { useGLTF, OrbitControls, Html, useProgress } from "@react-three/drei"
@@ -127,17 +127,14 @@ function Loader() {
 
 function ModelViewer({ modelUrl, materialMode }: { modelUrl: string; materialMode: "pbr" | "normal" | "white" }) {
   const gltf = useGLTF(modelUrl)
-  const scene = useMemo(() => gltf.scene.clone(true), [gltf.scene])
+  const scene = gltf.scene.clone(true)
 
-  const originalMaterials = useMemo(() => {
-    const materialsMap = new Map<string, THREE.Material | THREE.Material[]>()
-    scene.traverse((child) => {
-      if ((child as THREE.Mesh).isMesh) {
-        materialsMap.set(child.uuid, (child as THREE.Mesh).material)
-      }
-    })
-    return materialsMap
-  }, [scene])
+  const originalMaterials = new Map<string, THREE.Material | THREE.Material[]>()
+  scene.traverse((child) => {
+    if ((child as THREE.Mesh).isMesh) {
+      originalMaterials.set(child.uuid, (child as THREE.Mesh).material)
+    }
+  })
 
   useEffect(() => {
     scene.traverse((child) => {
@@ -184,7 +181,7 @@ function GalleryPage() {
   useEffect(() => {
     if (currentFolderId === null) {
       setBreadcrumbs([{ id: null, name: "Assets" }])
-    } else if (breadcrumbData) {
+    } else if (breadcrumbData && Array.isArray(breadcrumbData)) {
       const newBreadcrumbs = [{ id: null, name: "Assets" }, ...breadcrumbData.map((f) => ({ id: f.id, name: f.name }))]
       setBreadcrumbs(newBreadcrumbs)
     }
@@ -218,6 +215,21 @@ function GalleryPage() {
   const isMovingLight = useRef(false)
   const dragStartRef = useRef<{ x: number; y: number } | null>(null)
   const tipShown = useRef(false)
+
+  const filteredFolders =
+    gallery?.folders?.filter((folder) => folder.name.toLowerCase().includes(searchQuery.toLowerCase())) ?? []
+
+  const folderDescription = gallery?.currentFolder?.description?.toLowerCase() || ""
+
+  const filteredModels = gallery?.models
+    ? !searchQuery
+      ? gallery.models
+      : gallery.models.filter((model) => {
+          const modelNameMatch = model.name.toLowerCase().includes(searchQuery.toLowerCase())
+          const folderDescriptionMatch = folderDescription.includes(searchQuery.toLowerCase())
+          return modelNameMatch || folderDescriptionMatch
+        })
+    : []
 
   // --- Navigation and Actions ---
   const updateQuery = (newParams: Record<string, string | null>) => {
@@ -414,16 +426,17 @@ function GalleryPage() {
     }
   }, [isDraggingPanel])
 
-  const backgroundStyle = useMemo(() => {
-    switch (bgType) {
-      case "gradient":
-        return { background: `linear-gradient(to bottom, ${bgColor1}, ${bgColor2})` }
-      case "image":
-        return { backgroundImage: `url(${bgImage})`, backgroundSize: "cover", backgroundPosition: "center" }
-      default:
-        return { backgroundColor: bgColor1 }
-    }
-  }, [bgType, bgColor1, bgColor2, bgImage])
+  const backgroundStyle = {
+    background:
+      bgType === "gradient"
+        ? `linear-gradient(to bottom, ${bgColor1}, ${bgColor2})`
+        : bgType === "image"
+          ? `url(${bgImage})`
+          : bgColor1,
+    backgroundImage: bgType === "image" ? `url(${bgImage})` : "",
+    backgroundSize: bgType === "image" ? "cover" : "",
+    backgroundPosition: bgType === "image" ? "center" : "",
+  }
 
   const randomizeLights = useCallback(() => {
     setLights((prevLights) =>
@@ -547,24 +560,6 @@ function GalleryPage() {
       </div>
     )
   }
-
-  const filteredFolders =
-    gallery?.folders?.filter((folder) => folder.name.toLowerCase().includes(searchQuery.toLowerCase())) ?? []
-
-  const folderDescription = gallery?.currentFolder?.description?.toLowerCase() || ""
-
-  const filteredModels = useMemo(() => {
-    if (!gallery?.models) return []
-    if (!searchQuery) return gallery.models
-
-    const lowerCaseQuery = searchQuery.toLowerCase()
-
-    return gallery.models.filter((model) => {
-      const modelNameMatch = model.name.toLowerCase().includes(lowerCaseQuery)
-      const folderDescriptionMatch = folderDescription.includes(lowerCaseQuery)
-      return modelNameMatch || folderDescriptionMatch
-    })
-  }, [gallery, searchQuery, folderDescription])
 
   return (
     <div className="bg-background text-foreground">
