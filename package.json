@@ -4,6 +4,8 @@
   "private": true,
   "scripts": {
     "build": "next build",
+    "db:push": "psql $POSTGRES_URL -f scripts/01-initial-schema.sql -f scripts/02-helper-functions.sql",
+    "db:relink": "node scripts/relink-models.mjs",
     "dev": "next dev",
     "lint": "next lint",
     "start": "next start"
@@ -71,6 +73,7 @@
     "zod": "^3.24.1"
   },
   "devDependencies": {
+    "@neondatabase/serverless": "^0.9.4",
     "@types/node": "^22",
     "@types/react": "^19",
     "@types/react-dom": "^19",
