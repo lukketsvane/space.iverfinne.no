@@ -484,7 +484,9 @@ function GalleryPage() {
                 key={light.id}
                 position={light.position}
                 intensity={light.intensity}
-                color={new THREE.Color().setFromVector(kelvinToRgb(light.kelvin))}
+                color={
+                  new THREE.Color(kelvinToRgb(light.kelvin).r, kelvinToRgb(light.kelvin).g, kelvinToRgb(light.kelvin).b)
+                }
                 decay={light.decay}
               />
             ))}
