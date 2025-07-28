@@ -84,6 +84,10 @@ import { Separator } from "@/components/ui/separator"
 import { kelvinToRgb } from "@/lib/utils"
 import { Screenshotter } from "@/components/screenshotter"
 import { removeBackground, dataUrlToBlob } from "@/lib/image"
+import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from "@/components/ui/accordion"
+import { Label } from "@/components/ui/label"
+import { Slider } from "@/components/ui/slider"
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 
 // --- Type Definitions ---
 interface Model {
@@ -217,8 +221,8 @@ function GalleryPage() {
   const [isDragging, setIsDragging] = useState(false)
   const [isSettingsPanelOpen, setIsSettingsPanelOpen] = useState(true)
   const [bgType, setBgType] = useState<"color" | "gradient" | "image">("color")
-  const [bgColor1, setBgColor1] = useState("#000000")
-  const [bgColor2, setBgColor2] = useState("#1a1a1a")
+  const [bgColor1, setBgColor1] = useState("#1a1a1a")
+  const [bgColor2, setBgColor2] = useState("#101010")
   const [bgImage, setBgImage] = useState<string | null>(null)
   const [lights, setLights] = useState<Light[]>([
     { id: Date.now() + 1, position: [5, 5, 5], intensity: 10.0, kelvin: 6500, decay: 0.0 },
@@ -1207,7 +1211,7 @@ function SettingsPanel({
   onUpdate,
   onDelete,
   onThumbnailUpload,
-  onTakeScreenshot, // This prop is now required
+  onTakeScreenshot,
   isScreenshotting,
   lights,
   onLightsChange,
@@ -1224,7 +1228,7 @@ function SettingsPanel({
   onUpdate: (id: string, updates: Partial<Omit<Model, "id" | "created_at">>) => void
   onDelete: () => void
   onThumbnailUpload: (file: File) => void
-  onTakeScreenshot: () => Promise<void> // Ensure this is part of the props
+  onTakeScreenshot: () => Promise<void>
   isScreenshotting: boolean
   lights: Light[]
   onLightsChange: (lights: Light[]) => void
@@ -1242,7 +1246,7 @@ function SettingsPanel({
   const thumbnailInputRef = useRef<HTMLInputElement>(null)
   const bgImageInputRef = useRef<HTMLInputElement>(null)
 
-  const { data: allFolders, error: foldersError } = useSWR<Folder[]>("/api/folders/all", fetcher)
+  const { data: allFolders } = useSWR<Folder[]>("/api/folders/all", fetcher)
 
   useEffect(() => {
     setName(model.name)
@@ -1272,12 +1276,16 @@ function SettingsPanel({
         decay: 1,
       }
       onLightsChange([...lights, newLight])
+    } else {
+      toast.error("A maximum of 3 lights are allowed.")
     }
   }
 
   const removeLight = (id: number) => {
     if (lights.length > 1) {
       onLightsChange(lights.filter((light) => light.id !== id))
+    } else {
+      toast.error("At least one light is required.")
     }
   }
 
@@ -1294,15 +1302,21 @@ function SettingsPanel({
 
   return (
     <div className="px-4 pb-4 flex flex-col h-full text-white overflow-y-auto">
-      <div className="space-y-4 flex-1 overflow-y-auto pr-2">
-        <div className="flex items-center justify-between">
-          <h3 className="text-sm font-semibold">Name</h3>
-          <EditableValue value={Number.parseFloat(name)} onSave={handleNameBlur} />
+      <div className="space-y-4 flex-1 overflow-y-auto pr-2 -mr-2">
+        <div className="space-y-2">
+          <Label className="text-sm font-semibold">Name</Label>
+          <Input
+            value={name}
+            onChange={(e) => setName(e.target.value)}
+            onBlur={handleNameBlur}
+            className="bg-white/10 border-white/30 h-9"
+          />
         </div>
-        <div className="flex items-center justify-between">
-          <h3 className="text-sm font-semibold">Folder</h3>
+
+        <div className="space-y-2">
+          <Label className="text-sm font-semibold">Folder</Label>
           <Select value={model.folder_id || "root"} onValueChange={handleFolderChange}>
-            <SelectTrigger className="bg-white/10 border-white/30">
+            <SelectTrigger className="bg-white/10 border-white/30 h-9">
               <SelectValue placeholder="Select folder" />
             </SelectTrigger>
             <SelectContent>
@@ -1315,114 +1329,144 @@ function SettingsPanel({
             </SelectContent>
           </Select>
         </div>
-        <div className="flex items-center justify-between">
-          <h3 className="text-sm font-semibold">Lights</h3>
-          <div className="flex gap-2">
-            {lights.map((light) => (
-              <div key={light.id} className="flex flex-col items-center">
-                <EditableValue
-                  value={light.position[0]}
-                  onSave={(newValue) =>
-                    handleLightChange(light.id, { position: [newValue, light.position[1], light.position[2]] })
-                  }
-                  units="m"
-                />
-                <EditableValue
-                  value={light.position[1]}
-                  onSave={(newValue) =>
-                    handleLightChange(light.id, { position: [light.position[0], newValue, light.position[2]] })
-                  }
-                  units="m"
-                />
-                <EditableValue
-                  value={light.position[2]}
-                  onSave={(newValue) =>
-                    handleLightChange(light.id, { position: [light.position[0], light.position[1], newValue] })
-                  }
-                  units="m"
-                />
-                <EditableValue
-                  value={light.intensity}
-                  onSave={(newValue) => handleLightChange(light.id, { intensity: newValue })}
-                  units="lx"
-                />
-                <EditableValue
-                  value={light.kelvin}
-                  onSave={(newValue) => handleLightChange(light.id, { kelvin: newValue })}
-                  units="K"
-                />
-                <EditableValue
-                  value={light.decay}
-                  onSave={(newValue) => handleLightChange(light.id, { decay: newValue })}
-                />
-                <Button variant="ghost" size="icon" onClick={() => removeLight(light.id)}>
-                  <Trash2 className="h-4 w-4" />
-                </Button>
-              </div>
-            ))}
-            <Button variant="ghost" size="icon" onClick={addLight}>
+
+        <Separator className="my-4 bg-white/20" />
+
+        <div className="space-y-2">
+          <div className="flex items-center justify-between">
+            <h3 className="text-sm font-semibold">Lights</h3>
+            <Button variant="ghost" size="icon" className="h-7 w-7" onClick={addLight}>
               <FolderPlus className="h-4 w-4" />
             </Button>
           </div>
+          <Accordion type="multiple" defaultValue={lights.map((l) => `light-${l.id}`)} className="w-full">
+            {lights.map((light, index) => (
+              <AccordionItem key={light.id} value={`light-${light.id}`} className="border-white/10">
+                <AccordionTrigger>
+                  <div className="flex items-center justify-between w-full">
+                    <span>Light {index + 1}</span>
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      className="h-6 w-6 hover:bg-destructive/50 hover:text-white"
+                      onClick={(e) => {
+                        e.stopPropagation()
+                        removeLight(light.id)
+                      }}
+                    >
+                      <Trash2 className="h-3 w-3" />
+                    </Button>
+                  </div>
+                </AccordionTrigger>
+                <AccordionContent className="space-y-4 pt-2">
+                  <div className="space-y-2">
+                    <Label className="text-xs">Position (X, Y, Z)</Label>
+                    <div className="flex gap-2">
+                      {([0, 1, 2] as const).map((i) => (
+                        <Input
+                          key={i}
+                          type="number"
+                          value={light.position[i]}
+                          onChange={(e) => {
+                            const newPos = [...light.position] as [number, number, number]
+                            newPos[i] = Number.parseFloat(e.target.value)
+                            handleLightChange(light.id, { position: newPos })
+                          }}
+                          className="bg-white/10 border-white/30 h-8 text-xs"
+                        />
+                      ))}
+                    </div>
+                  </div>
+                  <div className="space-y-2">
+                    <div className="flex justify-between items-center">
+                      <Label className="text-xs">Intensity</Label>
+                      <span className="text-xs text-muted-foreground">{light.intensity.toFixed(1)}</span>
+                    </div>
+                    <Slider
+                      value={[light.intensity]}
+                      onValueChange={([val]) => handleLightChange(light.id, { intensity: val })}
+                      max={50}
+                      step={0.1}
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <div className="flex justify-between items-center">
+                      <Label className="text-xs">Temperature</Label>
+                      <span className="text-xs text-muted-foreground">{light.kelvin.toFixed(0)}K</span>
+                    </div>
+                    <Slider
+                      value={[light.kelvin]}
+                      onValueChange={([val]) => handleLightChange(light.id, { kelvin: val })}
+                      min={1000}
+                      max={12000}
+                      step={100}
+                    />
+                  </div>
+                </AccordionContent>
+              </AccordionItem>
+            ))}
+          </Accordion>
         </div>
-        <div className="flex items-center justify-between">
-          <h3 className="text-sm font-semibold">Background Type</h3>
-          <Select value={bgType} onValueChange={onBgTypeChange}>
-            <SelectTrigger className="bg-white/10 border-white/30">
-              <SelectValue placeholder="Select background type" />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="color">Color</SelectItem>
-              <SelectItem value="gradient">Gradient</SelectItem>
-              <SelectItem value="image">Image</SelectItem>
-            </SelectContent>
-          </Select>
-        </div>
-        {bgType === "color" && (
-          <div className="flex items-center justify-between">
-            <h3 className="text-sm font-semibold">Background Color</h3>
-            <input
-              type="color"
-              value={bgColor1}
-              onChange={(e) => onBgColor1Change(e.target.value)}
-              className="w-10 h-10"
-            />
-          </div>
-        )}
-        {bgType === "gradient" && (
-          <>
-            <div className="flex items-center justify-between">
-              <h3 className="text-sm font-semibold">Gradient Color 1</h3>
-              <input
-                type="color"
-                value={bgColor1}
-                onChange={(e) => onBgColor1Change(e.target.value)}
-                className="w-10 h-10"
-              />
-            </div>
-            <div className="flex items-center justify-between">
-              <h3 className="text-sm font-semibold">Gradient Color 2</h3>
-              <input
-                type="color"
-                value={bgColor2}
-                onChange={(e) => onBgColor2Change(e.target.value)}
-                className="w-10 h-10"
-              />
-            </div>
-          </>
-        )}
-        {bgType === "image" && (
-          <div className="flex items-center justify-between">
-            <h3 className="text-sm font-semibold">Background Image</h3>
-            <input
-              type="file"
-              ref={bgImageInputRef}
-              onChange={(e) => handleBgImageUpload(e)}
-              className="bg-white/10 border-white/30"
-            />
-          </div>
-        )}
+
         <Separator className="my-4 bg-white/20" />
+
+        <div className="space-y-2">
+          <h3 className="text-sm font-semibold">Background</h3>
+          <Tabs
+            value={bgType}
+            onValueChange={(value) => onBgTypeChange(value as "color" | "gradient" | "image")}
+            className="w-full"
+          >
+            <TabsList className="grid w-full grid-cols-3 h-9">
+              <TabsTrigger value="color">Color</TabsTrigger>
+              <TabsTrigger value="gradient">Gradient</TabsTrigger>
+              <TabsTrigger value="image">Image</TabsTrigger>
+            </TabsList>
+            <TabsContent value="color" className="pt-2">
+              <div className="flex items-center justify-between rounded-md border border-white/20 p-2">
+                <Label className="text-sm">Color</Label>
+                <Input
+                  type="color"
+                  value={bgColor1}
+                  onChange={(e) => onBgColor1Change(e.target.value)}
+                  className="w-8 h-8 p-0 bg-transparent border-none rounded-md cursor-pointer"
+                />
+              </div>
+            </TabsContent>
+            <TabsContent value="gradient" className="pt-2 space-y-2">
+              <div className="flex items-center justify-between rounded-md border border-white/20 p-2">
+                <Label className="text-sm">Top</Label>
+                <Input
+                  type="color"
+                  value={bgColor1}
+                  onChange={(e) => onBgColor1Change(e.target.value)}
+                  className="w-8 h-8 p-0 bg-transparent border-none rounded-md cursor-pointer"
+                />
+              </div>
+              <div className="flex items-center justify-between rounded-md border border-white/20 p-2">
+                <Label className="text-sm">Bottom</Label>
+                <Input
+                  type="color"
+                  value={bgColor2}
+                  onChange={(e) => onBgColor2Change(e.target.value)}
+                  className="w-8 h-8 p-0 bg-transparent border-none rounded-md cursor-pointer"
+                />
+              </div>
+            </TabsContent>
+            <TabsContent value="image" className="pt-2">
+              <Input
+                type="file"
+                ref={bgImageInputRef}
+                onChange={handleBgImageUpload}
+                accept="image/*"
+                className="bg-white/10 border-white/30 text-xs file:text-white"
+              />
+            </TabsContent>
+          </Tabs>
+        </div>
+
+        <Separator className="my-4 bg-white/20" />
+
         <div>
           <h3 className="text-sm font-semibold mb-2">Thumbnail</h3>
           <div className="flex gap-2">
@@ -1456,7 +1500,9 @@ function SettingsPanel({
             </Button>
           </div>
         </div>
+
         <Separator className="my-4 bg-white/20" />
+
         <div>
           <Button variant="destructive" className="w-full" onClick={() => setShowDeleteConfirm(true)}>
             <Trash2 className="mr-2 h-4 w-4" />
