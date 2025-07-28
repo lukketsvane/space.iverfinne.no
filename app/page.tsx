@@ -12,6 +12,7 @@ import {
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Accordion, AccordionItem, AccordionTrigger, AccordionContent } from "@/components/ui/accordion"
 import { Slider } from "@/components/ui/slider"
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 
 import type React from "react"
 
@@ -106,6 +107,7 @@ interface Light {
   position: [number, number, number]
   intensity: number
   kelvin: number
+  decay: number
 }
 
 // --- Data Fetching ---
@@ -184,11 +186,21 @@ function App() {
 
   // Viewer settings state
   const [materialMode, setMaterialMode] = useState<"pbr" | "normal" | "white">("pbr")
-  const [bgColor, setBgColor] = useState("#000000")
-  const [lights, setLights] = useState<Light[]>([{ id: Date.now(), position: [5, 5, 5], intensity: 1.5, kelvin: 6500 }])
-  const [isSettingsOpen, setIsSettingsOpen] = useState(false)
   const [isDragging, setIsDragging] = useState(false)
   const [isSettingsPanelOpen, setIsSettingsPanelOpen] = useState(true)
+
+  // Background state
+  const [bgType, setBgType] = useState<"color" | "gradient" | "image">("color")
+  const [bgColor1, setBgColor1] = useState("#000000")
+  const [bgColor2, setBgColor2] = useState("#1a1a1a")
+  const [bgImage, setBgImage] = useState<string | null>(null)
+
+  // Lights state with new defaults
+  const [lights, setLights] = useState<Light[]>([
+    { id: Date.now() + 1, position: [5, 5, 5], intensity: 1.8, kelvin: 6500, decay: 1 },
+    { id: Date.now() + 2, position: [-5, 5, 5], intensity: 4.0, kelvin: 9600, decay: 1 },
+    { id: Date.now() + 3, position: [0, -5, -5], intensity: 1.3, kelvin: 2600, decay: 1 },
+  ])
 
   // Add these lines for panel dragging
   const [panelPosition, setPanelPosition] = useState({ x: 0, y: 0 })
@@ -206,7 +218,7 @@ function App() {
   // --- Event Handlers & Actions ---
 
   const handlePanelDragStart = (e: React.PointerEvent<HTMLDivElement>) => {
-    if ((e.target as HTMLElement).closest("button, input, .slider-thumb")) {
+    if ((e.target as HTMLElement).closest("button, input, .slider-thumb, .editable-value")) {
       return
     }
     e.preventDefault()
@@ -557,10 +569,22 @@ function App() {
   const filteredModels =
     gallery?.models?.filter((model) => model.name.toLowerCase().includes(searchQuery.toLowerCase())) ?? []
 
+  const backgroundStyle = useMemo(() => {
+    switch (bgType) {
+      case "gradient":
+        return { background: `linear-gradient(to bottom, ${bgColor1}, ${bgColor2})` }
+      case "image":
+        return { backgroundImage: `url(${bgImage})`, backgroundSize: "cover", backgroundPosition: "center" }
+      case "color":
+      default:
+        return { backgroundColor: bgColor1 }
+    }
+  }, [bgType, bgColor1, bgColor2, bgImage])
+
   // --- Render Logic ---
   if (selectedModel) {
     return (
-      <div className="w-full h-screen relative" style={{ backgroundColor: bgColor }}>
+      <div className="w-full h-screen relative" style={backgroundStyle}>
         <Toaster richColors />
         <Canvas
           camera={{ fov: 50, position: [0, 1, 5] }}
@@ -573,11 +597,13 @@ function App() {
             {lights.map((light) => {
               const color = kelvinToRgb(light.kelvin)
               return (
-                <directionalLight
+                <pointLight
                   key={light.id}
                   position={light.position}
                   intensity={light.intensity}
                   color={[color.r, color.g, color.b]}
+                  decay={light.decay}
+                  distance={0} // 0 means infinite distance
                 />
               )
             })}
@@ -627,8 +653,14 @@ function App() {
               onThumbnailUpload={handleThumbnailUpload}
               lights={lights}
               onLightsChange={setLights}
-              bgColor={bgColor}
-              onBgColorChange={setBgColor}
+              bgType={bgType}
+              onBgTypeChange={setBgType}
+              bgColor1={bgColor1}
+              onBgColor1Change={setBgColor1}
+              bgColor2={bgColor2}
+              onBgColor2Change={setBgColor2}
+              bgImage={bgImage}
+              onBgImageChange={setBgImage}
             />
           </div>
         </div>
@@ -1110,6 +1142,66 @@ function RenameDialog({
   )
 }
 
+function EditableValue({
+  value,
+  onSave,
+  units = "",
+  className,
+  inputClassName,
+}: {
+  value: number
+  onSave: (newValue: number) => void
+  units?: string
+  className?: string
+  inputClassName?: string
+}) {
+  const [isEditing, setIsEditing] = useState(false)
+  const [currentValue, setCurrentValue] = useState(value.toString())
+  const inputRef = useRef<HTMLInputElement>(null)
+
+  useEffect(() => {
+    if (isEditing && inputRef.current) {
+      inputRef.current.focus()
+      inputRef.current.select()
+    }
+  }, [isEditing])
+
+  const handleSave = () => {
+    const numericValue = Number.parseFloat(currentValue)
+    if (!isNaN(numericValue)) {
+      onSave(numericValue)
+    } else {
+      // Reset to original value if input is invalid
+      setCurrentValue(value.toString())
+    }
+    setIsEditing(false)
+  }
+
+  if (isEditing) {
+    return (
+      <Input
+        ref={inputRef}
+        type="text"
+        value={currentValue}
+        onChange={(e) => setCurrentValue(e.target.value)}
+        onBlur={handleSave}
+        onKeyDown={(e) => {
+          if (e.key === "Enter") handleSave()
+          if (e.key === "Escape") setIsEditing(false)
+        }}
+        className={`h-6 text-xs w-16 text-right bg-white/20 border-white/30 ${inputClassName}`}
+      />
+    )
+  }
+
+  return (
+    <span onClick={() => setIsEditing(true)} className={`cursor-pointer text-xs w-16 text-right ${className}`}>
+      {value.toFixed(units === "K" ? 0 : 1)}
+      {units}
+    </span>
+  )
+}
+
 function SettingsPanel({
   model,
   onUpdate,
@@ -1117,8 +1209,14 @@ function SettingsPanel({
   onThumbnailUpload,
   lights,
   onLightsChange,
-  bgColor,
-  onBgColorChange,
+  bgType,
+  onBgTypeChange,
+  bgColor1,
+  onBgColor1Change,
+  bgColor2,
+  onBgColor2Change,
+  bgImage,
+  onBgImageChange,
 }: {
   model: Model
   onUpdate: (id: string, updates: Partial<Omit<Model, "id" | "created_at">>) => void
@@ -1126,12 +1224,19 @@ function SettingsPanel({
   onThumbnailUpload: (file: File) => void
   lights: Light[]
   onLightsChange: (lights: Light[]) => void
-  bgColor: string
-  onBgColorChange: (value: string) => void
+  bgType: "color" | "gradient" | "image"
+  onBgTypeChange: (type: "color" | "gradient" | "image") => void
+  bgColor1: string
+  onBgColor1Change: (value: string) => void
+  bgColor2: string
+  onBgColor2Change: (value: string) => void
+  bgImage: string | null
+  onBgImageChange: (value: string | null) => void
 }) {
   const [name, setName] = useState(model.name)
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false)
   const thumbnailInputRef = useRef<HTMLInputElement>(null)
+  const bgImageInputRef = useRef<HTMLInputElement>(null)
 
   const { data: allFolders, error: foldersError } = useSWR<Folder[]>("/api/folders/all", fetcher)
 
@@ -1160,6 +1265,7 @@ function SettingsPanel({
         position: [-5, 5, -5],
         intensity: 1,
         kelvin: 5500,
+        decay: 1,
       }
       onLightsChange([...lights, newLight])
     }
@@ -1168,6 +1274,17 @@ function SettingsPanel({
   const removeLight = (id: number) => {
     if (lights.length > 1) {
       onLightsChange(lights.filter((light) => light.id !== id))
+    }
+  }
+
+  const handleBgImageUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0]
+    if (file) {
+      const reader = new FileReader()
+      reader.onloadend = () => {
+        onBgImageChange(reader.result as string)
+      }
+      reader.readAsDataURL(file)
     }
   }
 
@@ -1248,7 +1365,7 @@ function SettingsPanel({
 
         <div>
           <label className="text-sm font-medium text-gray-400">Lighting</label>
-          <Accordion type="multiple" defaultValue={["light-0"]} className="w-full mt-2">
+          <Accordion type="multiple" defaultValue={["light-0", "light-1", "light-2"]} className="w-full mt-2">
             {lights.map((light, index) => {
               const color = kelvinToRgb(light.kelvin)
               const colorStyle = `rgb(${color.r * 255}, ${color.g * 255}, ${color.b * 255})`
@@ -1287,27 +1404,50 @@ function SettingsPanel({
                     <div>
                       <div className="flex justify-between items-center mb-1">
                         <label className="text-xs text-gray-400">Intensity</label>
-                        <span className="text-xs w-12 text-right">{light.intensity.toFixed(1)}</span>
+                        <EditableValue
+                          value={light.intensity}
+                          onSave={(newValue) => handleLightChange(light.id, { intensity: newValue })}
+                        />
                       </div>
                       <Slider
                         value={[light.intensity]}
                         onValueChange={(value) => handleLightChange(light.id, { intensity: value[0] })}
                         min={0}
-                        max={5}
+                        max={10}
                         step={0.1}
                       />
                     </div>
                     <div>
                       <div className="flex justify-between items-center mb-1">
                         <label className="text-xs text-gray-400">Temperature</label>
-                        <span className="text-xs w-16 text-right">{light.kelvin}K</span>
+                        <EditableValue
+                          value={light.kelvin}
+                          onSave={(newValue) => handleLightChange(light.id, { kelvin: newValue })}
+                          units="K"
+                        />
                       </div>
                       <Slider
                         value={[light.kelvin]}
                         onValueChange={(value) => handleLightChange(light.id, { kelvin: value[0] })}
-                        min={2000}
-                        max={10000}
+                        min={1000}
+                        max={12000}
                         step={100}
+                      />
+                    </div>
+                    <div>
+                      <div className="flex justify-between items-center mb-1">
+                        <label className="text-xs text-gray-400">Decay</label>
+                        <EditableValue
+                          value={light.decay}
+                          onSave={(newValue) => handleLightChange(light.id, { decay: newValue })}
+                        />
+                      </div>
+                      <Slider
+                        value={[light.decay]}
+                        onValueChange={(value) => handleLightChange(light.id, { decay: value[0] })}
+                        min={0}
+                        max={2}
+                        step={0.1}
                       />
                     </div>
                   </AccordionContent>
@@ -1325,13 +1465,61 @@ function SettingsPanel({
         <Separator className="bg-white/20" />
 
         <div>
-          <label className="text-sm font-medium text-gray-400">Background Color</label>
-          <Input
-            type="color"
-            value={bgColor}
-            onChange={(e) => onBgColorChange(e.target.value)}
-            className="w-full h-10 p-1 mt-2 bg-white/10 border-white/20"
-          />
+          <label className="text-sm font-medium text-gray-400">Background</label>
+          <Tabs value={bgType} onValueChange={(value) => onBgTypeChange(value as any)} className="w-full mt-2">
+            <TabsList className="grid w-full grid-cols-3 bg-white/10">
+              <TabsTrigger value="color">Color</TabsTrigger>
+              <TabsTrigger value="gradient">Gradient</TabsTrigger>
+              <TabsTrigger value="image">Image</TabsTrigger>
+            </TabsList>
+            <TabsContent value="color" className="mt-4">
+              <Input
+                type="color"
+                value={bgColor1}
+                onChange={(e) => onBgColor1Change(e.target.value)}
+                className="w-full h-10 p-1 bg-white/10 border-white/20"
+              />
+            </TabsContent>
+            <TabsContent value="gradient" className="mt-4 space-y-2">
+              <Input
+                type="color"
+                value={bgColor1}
+                onChange={(e) => onBgColor1Change(e.target.value)}
+                className="w-full h-10 p-1 bg-white/10 border-white/20"
+              />
+              <Input
+                type="color"
+                value={bgColor2}
+                onChange={(e) => onBgColor2Change(e.target.value)}
+                className="w-full h-10 p-1 bg-white/10 border-white/20"
+              />
+            </TabsContent>
+            <TabsContent value="image" className="mt-4">
+              <input
+                type="file"
+                ref={bgImageInputRef}
+                className="hidden"
+                accept="image/*"
+                onChange={handleBgImageUpload}
+              />
+              <Button
+                variant="outline"
+                className="w-full bg-white/10 border-white/20"
+                onClick={() => bgImageInputRef.current?.click()}
+              >
+                Upload Image
+              </Button>
+              {bgImage && (
+                <div className="mt-2 relative aspect-video w-full rounded-lg overflow-hidden group bg-white/10">
+                  <img
+                    src={bgImage || "/placeholder.svg"}
+                    alt="Background preview"
+                    className="w-full h-full object-cover"
+                  />
+                </div>
+              )}
+            </TabsContent>
+          </Tabs>
         </div>
       </div>
       <div className="mt-6 pt-4 border-t border-white/20">
