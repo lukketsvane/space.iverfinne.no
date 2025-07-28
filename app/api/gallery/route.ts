@@ -6,11 +6,18 @@ export const runtime = "nodejs"
 export async function GET(request: Request) {
   const { searchParams } = new URL(request.url)
   const folderId = searchParams.get("folderId") || null
+  const sortBy = searchParams.get("sortBy") || "created_at"
+  const sortOrder = searchParams.get("sortOrder") || "desc"
+
+  // Validate sortOrder to prevent potential issues
+  const ascending = sortOrder === "asc"
 
   try {
-    // Build queries
-    const foldersQuery = supabase.from("folders").select("*").order("name")
-    const modelsQuery = supabase.from("models").select("*").order("name")
+    // Folders are always sorted by name
+    const foldersQuery = supabase.from("folders").select("*").order("name", { ascending: true })
+
+    // Models are sorted based on query params
+    const modelsQuery = supabase.from("models").select("*").order(sortBy, { ascending })
 
     // Apply filters based on folderId
     if (folderId) {

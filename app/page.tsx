@@ -32,6 +32,7 @@ import {
   FolderSymlink,
   Search,
   ChevronDown,
+  ListFilter,
 } from "lucide-react"
 import { upload } from "@vercel/blob/client"
 import useSWR, { useSWRConfig } from "swr"
@@ -59,6 +60,9 @@ import {
   DropdownMenuSubTrigger,
   DropdownMenuPortal,
   DropdownMenuSubContent,
+  DropdownMenuLabel,
+  DropdownMenuRadioGroup,
+  DropdownMenuRadioItem,
 } from "@/components/ui/dropdown-menu"
 import {
   SidebarProvider,
@@ -164,8 +168,10 @@ function App() {
   const [currentFolderId, setCurrentFolderId] = useState<string | null>(null)
   const [breadcrumbs, setBreadcrumbs] = useState<{ id: string | null; name: string }[]>([{ id: null, name: "Assets" }])
   const [searchQuery, setSearchQuery] = useState("")
+  const [sortOption, setSortOption] = useState("created_at-desc")
 
-  const galleryUrl = `/api/gallery?folderId=${currentFolderId || ""}`
+  const [sortBy, sortOrder] = sortOption.split("-")
+  const galleryUrl = `/api/gallery?folderId=${currentFolderId || ""}&sortBy=${sortBy}&sortOrder=${sortOrder}`
   const { data: gallery, error, isLoading } = useSWR<GalleryContents>(galleryUrl, fetcher)
   const { data: allFolders } = useSWR<Folder[]>("/api/folders/all", fetcher)
 
@@ -724,15 +730,33 @@ function App() {
                 ))}
               </div>
             </div>
-            <div className="relative">
-              <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-              <Input
-                type="search"
-                placeholder="Search..."
-                className="pl-8 w-48 md:w-64"
-                value={searchQuery}
-                onChange={(e) => setSearchQuery(e.target.value)}
-              />
+            <div className="flex items-center gap-4">
+              <div className="relative">
+                <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+                <Input
+                  type="search"
+                  placeholder="Search..."
+                  className="pl-8 w-48 md:w-64"
+                  value={searchQuery}
+                  onChange={(e) => setSearchQuery(e.target.value)}
+                />
+              </div>
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>
+                  <Button variant="outline" size="icon" className="shrink-0 bg-transparent">
+                    <ListFilter className="h-4 w-4" />
+                    <span className="sr-only">Sort</span>
+                  </Button>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="end">
+                  <DropdownMenuLabel>Sort by</DropdownMenuLabel>
+                  <DropdownMenuRadioGroup value={sortOption} onValueChange={setSortOption}>
+                    <DropdownMenuRadioItem value="created_at-desc">Most Recent</DropdownMenuRadioItem>
+                    <DropdownMenuRadioItem value="name-asc">Name (A-Z)</DropdownMenuRadioItem>
+                    <DropdownMenuRadioItem value="name-desc">Name (Z-A)</DropdownMenuRadioItem>
+                  </DropdownMenuRadioGroup>
+                </DropdownMenuContent>
+              </DropdownMenu>
             </div>
           </header>
           <main
