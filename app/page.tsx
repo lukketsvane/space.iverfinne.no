@@ -41,7 +41,6 @@ import * as THREE from "three"
 
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
-import { Slider } from "@/components/ui/slider"
 import {
   Dialog,
   DialogContent,
@@ -76,7 +75,7 @@ import {
   SidebarTrigger,
 } from "@/components/ui/sidebar"
 import { Separator } from "@/components/ui/separator"
-import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from "@/components/ui/accordion"
+import { Accordion, AccordionItem, AccordionTrigger } from "@/components/ui/accordion"
 import { kelvinToRgb } from "@/lib/utils"
 
 // --- Type Definitions ---
@@ -410,6 +409,7 @@ function App() {
         access: "public",
         handleUploadUrl: "/api/upload",
         clientPayload: JSON.stringify({ isThumbnail: true }), // Signal to overwrite
+        allowOverwrite: true,
       })
       await handleModelUpdate(selectedModel.id, { thumbnail_url: newBlob.url })
     } catch (err) {
@@ -1254,55 +1254,35 @@ function SettingsPanel({
               const colorStyle = `rgb(${color.r * 255}, ${color.g * 255}, ${color.b * 255})`
               return (
                 <AccordionItem key={light.id} value={`light-${index}`} className="border-b-white/10">
-                  <AccordionTrigger>
-                    <div className="flex items-center justify-between w-full">
-                      <div className="flex items-center gap-2">
-                        <div
-                          className="w-4 h-4 rounded-full border border-white/20"
-                          style={{ backgroundColor: colorStyle }}
-                        />
-                        <span>Light {index + 1}</span>
+                  <div className="flex items-center w-full">
+                    <AccordionTrigger className="flex-1 text-left">
+                      <div className="flex items-center justify-between w-full">
+                        <div className="flex items-center gap-2">
+                          <div
+                            className="w-4 h-4 rounded-full border border-white/20"
+                            style={{ backgroundColor: colorStyle }}
+                          />
+                          <span>Light {index + 1}</span>
+                        </div>
+                        {index === 0 && <span className="text-xs font-normal text-gray-400">(Shift+Drag)</span>}
                       </div>
-                      <div className="flex items-center">
-                        {index === 0 && <span className="text-xs font-normal text-gray-400 mr-2">(Shift+Drag)</span>}
-                        {lights.length > 1 && (
-                          <Button
-                            variant="ghost"
-                            size="icon"
-                            className="h-6 w-6 text-gray-400 hover:bg-white/20 hover:text-white"
-                            onClick={(e) => {
-                              e.stopPropagation()
-                              removeLight(light.id)
-                            }}
-                          >
-                            <Trash2 className="h-4 w-4" />
-                          </Button>
-                        )}
+                    </AccordionTrigger>
+                    {lights.length > 1 && (
+                      <div className="pl-2 pr-4">
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          className="h-6 w-6 text-gray-400 hover:bg-white/20 hover:text-white"
+                          onClick={(e) => {
+                            e.stopPropagation()
+                            removeLight(light.id)
+                          }}
+                        >
+                          <Trash2 className="h-4 w-4" />
+                        </Button>
                       </div>
-                    </div>
-                  </AccordionTrigger>
-                  <AccordionContent className="pt-2 space-y-4">
-                    <div>
-                      <label className="text-xs text-gray-400">Intensity</label>
-                      <Slider
-                        value={[light.intensity]}
-                        onValueChange={(v) => handleLightChange(light.id, { intensity: v[0] })}
-                        min={0}
-                        max={5}
-                        step={0.1}
-                      />
-                    </div>
-                    <div>
-                      <label className="text-xs text-gray-400">Color Temperature ({light.kelvin}K)</label>
-                      <Slider
-                        value={[light.kelvin]}
-                        onValueChange={(v) => handleLightChange(light.id, { kelvin: v[0] })}
-                        min={1000}
-                        max={12000}
-                        step={100}
-                      />
-                    </div>
-                  </AccordionContent>
+                    )}
+                  </div>
                 </AccordionItem>
               )
             })}
