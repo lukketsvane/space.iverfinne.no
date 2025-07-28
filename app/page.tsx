@@ -173,19 +173,29 @@ function GalleryPage() {
   const { data: gallery, error, isLoading } = useSWR<GalleryContents>(galleryUrl, fetcher)
   const { data: allFolders } = useSWR<Folder[]>("/api/folders/all", fetcher)
   const { data: selectedModel } = useSWR<Model>(modelId ? `/api/models/${modelId}` : null, fetcher)
-  const { data: breadcrumbData } = useSWR<{ id: string; name: string }[]>(
+  const { data: breadcrumbData, error: breadcrumbError } = useSWR<{ id: string; name: string }[]>(
     currentFolderId ? `/api/folders/${currentFolderId}/breadcrumbs` : null,
     fetcher,
   )
 
   useEffect(() => {
+    if (breadcrumbError) {
+      console.error("Failed to load breadcrumbs:", breadcrumbError)
+      toast.error(
+        "Could not load folder path. Your database schema might be out of date. Try running `npm run db:push`.",
+        {
+          duration: 10000,
+        },
+      )
+    }
+
     if (currentFolderId === null) {
       setBreadcrumbs([{ id: null, name: "Assets" }])
     } else if (breadcrumbData && Array.isArray(breadcrumbData)) {
       const newBreadcrumbs = [{ id: null, name: "Assets" }, ...breadcrumbData.map((f) => ({ id: f.id, name: f.name }))]
       setBreadcrumbs(newBreadcrumbs)
     }
-  }, [currentFolderId, breadcrumbData])
+  }, [currentFolderId, breadcrumbData, breadcrumbError])
 
   const [uploadingFiles, setUploadingFiles] = useState<{ name: string; progress: number }[]>([])
   const [isNewFolderDialogOpen, setIsNewFolderDialogOpen] = useState(false)
