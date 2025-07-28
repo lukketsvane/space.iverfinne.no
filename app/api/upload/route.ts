@@ -4,28 +4,35 @@ import { NextResponse } from "next/server"
 export const runtime = "nodejs"
 
 export async function POST(request: Request): Promise<NextResponse> {
-  const body = (await request.json()) as HandleUploadBody
+  let body: HandleUploadBody
+  try {
+    body = (await request.json()) as HandleUploadBody
+  } catch (e) {
+    return NextResponse.json({ error: "Failed to parse request body." }, { status: 400 })
+  }
 
   try {
     const jsonResponse = await handleUpload({
       body,
       request,
+      token: process.env.BLOB_READ_WRITE_TOKEN, // Explicitly pass the token
       onBeforeGenerateToken: async (pathname, clientPayload) => {
         let payload: { isThumbnail?: boolean } = {}
         if (clientPayload) {
           try {
             payload = JSON.parse(clientPayload)
           } catch (error) {
-            // Ignore malformed client payload
+            console.error("Error parsing clientPayload:", error)
+            // Handle case where clientPayload is not valid JSON
           }
         }
+
         const { isThumbnail } = payload
 
         return {
-          // Don't add a random suffix for thumbnails to allow overwriting
-          addRandomSuffix: !isThumbnail,
-          // Pass the original pathname for thumbnails to ensure it's not changed
-          pathname: isThumbnail ? pathname : undefined,
+          // If it's a thumbnail, we want to overwrite, so we disable the random suffix.
+          // If it's a model, we want a unique name, so we enable the random suffix.
+          addRandomSuffix: isThumbnail !== true,
           allowedContentTypes: [
             "model/gltf-binary",
             "application/octet-stream",
@@ -37,12 +44,16 @@ export async function POST(request: Request): Promise<NextResponse> {
         }
       },
       onUploadCompleted: async ({ blob, tokenPayload }) => {
+        // This callback is called after the file is uploaded.
+        // We don't do anything here because the client-side will handle
+        // updating the database.
         console.log("Blob upload completed:", blob.url)
       },
     })
 
     return NextResponse.json(jsonResponse)
   } catch (error) {
-    return NextResponse.json({ error: (error as Error).message }, { status: 400 })
+    console.error("Error in handleUpload:", error)
+    return NextResponse.json({ error: `Vercel Blob upload error: ${(error as Error).message}` }, { status: 400 })
   }
 }
