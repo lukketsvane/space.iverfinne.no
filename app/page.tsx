@@ -10,6 +10,8 @@ import {
   ContextMenuSubContent,
 } from "@/components/ui/context-menu"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
+import { Accordion, AccordionItem, AccordionTrigger, AccordionContent } from "@/components/ui/accordion"
+import { Slider } from "@/components/ui/slider"
 
 import type React from "react"
 
@@ -75,7 +77,6 @@ import {
   SidebarTrigger,
 } from "@/components/ui/sidebar"
 import { Separator } from "@/components/ui/separator"
-import { Accordion, AccordionItem, AccordionTrigger } from "@/components/ui/accordion"
 import { kelvinToRgb } from "@/lib/utils"
 
 // --- Type Definitions ---
@@ -337,7 +338,6 @@ function App() {
   }
 
   const handleDeleteItem = async (item: { id: string; type: "folder" | "model" }) => {
-    if (!window.confirm(`Are you sure you want to delete this ${item.type}?`)) return
     const url = item.type === "folder" ? `/api/folders/${item.id}` : `/api/models/${item.id}`
     try {
       const res = await fetch(url, { method: "DELETE" })
@@ -1255,7 +1255,7 @@ function SettingsPanel({
               return (
                 <AccordionItem key={light.id} value={`light-${index}`} className="border-b-white/10">
                   <div className="flex items-center w-full">
-                    <AccordionTrigger className="flex-1 text-left">
+                    <AccordionTrigger className="flex-1 text-left py-3">
                       <div className="flex items-center justify-between w-full">
                         <div className="flex items-center gap-2">
                           <div
@@ -1268,11 +1268,11 @@ function SettingsPanel({
                       </div>
                     </AccordionTrigger>
                     {lights.length > 1 && (
-                      <div className="pl-2 pr-4">
+                      <div className="pl-2">
                         <Button
                           variant="ghost"
                           size="icon"
-                          className="h-6 w-6 text-gray-400 hover:bg-white/20 hover:text-white"
+                          className="h-8 w-8 text-gray-400 hover:bg-white/20 hover:text-white"
                           onClick={(e) => {
                             e.stopPropagation()
                             removeLight(light.id)
@@ -1283,6 +1283,34 @@ function SettingsPanel({
                       </div>
                     )}
                   </div>
+                  <AccordionContent className="pt-2 pb-4 space-y-4">
+                    <div>
+                      <div className="flex justify-between items-center mb-1">
+                        <label className="text-xs text-gray-400">Intensity</label>
+                        <span className="text-xs w-12 text-right">{light.intensity.toFixed(1)}</span>
+                      </div>
+                      <Slider
+                        value={[light.intensity]}
+                        onValueChange={(value) => handleLightChange(light.id, { intensity: value[0] })}
+                        min={0}
+                        max={5}
+                        step={0.1}
+                      />
+                    </div>
+                    <div>
+                      <div className="flex justify-between items-center mb-1">
+                        <label className="text-xs text-gray-400">Temperature</label>
+                        <span className="text-xs w-16 text-right">{light.kelvin}K</span>
+                      </div>
+                      <Slider
+                        value={[light.kelvin]}
+                        onValueChange={(value) => handleLightChange(light.id, { kelvin: value[0] })}
+                        min={2000}
+                        max={10000}
+                        step={100}
+                      />
+                    </div>
+                  </AccordionContent>
                 </AccordionItem>
               )
             })}
