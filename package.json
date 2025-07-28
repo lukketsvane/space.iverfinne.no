@@ -4,6 +4,7 @@
   "private": true,
   "scripts": {
     "build": "next build",
+    "db:push": "psql $POSTGRES_URL -f scripts/01-initial-schema.sql -f scripts/02-helper-functions.sql",
     "dev": "next dev",
     "lint": "next lint",
     "start": "next start"
