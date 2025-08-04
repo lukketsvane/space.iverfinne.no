@@ -1,10 +1,11 @@
 "use client"
 
+import { ContextMenuTrigger } from "@/components/ui/context-menu"
+
 import {
   ContextMenu,
   ContextMenuContent,
   ContextMenuItem,
-  ContextMenuTrigger,
   ContextMenuSub,
   ContextMenuSubTrigger,
   ContextMenuSubContent,
@@ -110,60 +111,84 @@ const ModelViewer = forwardRef<THREE.Group, { modelUrl: string; materialMode: "p
   ({ modelUrl, materialMode }, ref) => {
     const gltf = useGLTF(modelUrl)
     const scene = useMemo(() => gltf.scene.clone(true), [gltf.scene])
-    const originalMaterials = useRef(new Map<string, THREE.Material | THREE.Material[]>())
 
-    // This effect runs once to set up shadows, materials, and position the model
+    const originalMaterials = useRef(new Map<string, THREE.Material | THREE.Material[]>())
+    const whiteMaterials = useRef(new Map<string, THREE.Material | THREE.Material[]>())
+    const normalMaterial = useMemo(() => new THREE.MeshNormalMaterial({ side: THREE.DoubleSide }), [])
+
+    // This effect runs once to set up shadows and create material variants
     useEffect(() => {
       const box = new THREE.Box3().setFromObject(scene)
       const center = new THREE.Vector3()
       box.getCenter(center)
 
-      // Auto-center and ground the model
       scene.position.x -= center.x
       scene.position.z -= center.z
       scene.position.y -= box.min.y
 
+      // Create a single 1x1 white texture to be reused
+      const whiteTexture = new THREE.CanvasTexture(document.createElement("canvas"))
+      const context = (whiteTexture.image as HTMLCanvasElement).getContext("2d")
+      if (context) {
+        whiteTexture.image.width = 1
+        whiteTexture.image.height = 1
+        context.fillStyle = "white"
+        context.fillRect(0, 0, 1, 1)
+        whiteTexture.needsUpdate = true
+      }
+
       scene.traverse((child) => {
         if ((child as THREE.Mesh).isMesh) {
-          // Enable shadows for all meshes
           child.castShadow = true
           child.receiveShadow = true
-          // Store original materials for PBR mode
-          originalMaterials.current.set(child.uuid, (child as THREE.Mesh).material)
+
+          const mesh = child as THREE.Mesh
+
+          // Store original material
+          originalMaterials.current.set(mesh.uuid, mesh.material)
+
+          // Create and store a "white" version of the material
+          const createWhiteVariant = (mat: THREE.Material): THREE.Material => {
+            if (mat instanceof THREE.MeshStandardMaterial) {
+              const whiteMat = mat.clone()
+              whiteMat.map = whiteTexture // Replace the albedo texture
+              whiteMat.color.set("white") // Set the base color to white
+              return whiteMat
+            }
+            // Fallback for any non-standard materials
+            return new THREE.MeshStandardMaterial({ color: "white", side: THREE.DoubleSide })
+          }
+
+          if (Array.isArray(mesh.material)) {
+            whiteMaterials.current.set(mesh.uuid, mesh.material.map(createWhiteVariant))
+          } else {
+            whiteMaterials.current.set(mesh.uuid, createWhiteVariant(mesh.material))
+          }
         }
       })
     }, [scene])
 
-    // This effect handles switching materials
+    // This effect handles switching materials based on the selected mode
     useEffect(() => {
       scene.traverse((child) => {
         if ((child as THREE.Mesh).isMesh) {
           const mesh = child as THREE.Mesh
+          let newMaterial: THREE.Material | THREE.Material[] | undefined
+
           if (materialMode === "pbr") {
-            const originalMaterial = originalMaterials.current.get(mesh.uuid)
-            if (originalMaterial) mesh.material = originalMaterial
-          } else if (materialMode === "normal") {
-            // Create a new normal material for each mesh to avoid sharing issues
-            mesh.material = new THREE.MeshNormalMaterial({
-              side: THREE.DoubleSide,
-              transparent: false,
-              opacity: 1,
-            })
+            newMaterial = originalMaterials.current.get(mesh.uuid)
           } else if (materialMode === "white") {
-            // Create a new basic material for each mesh to avoid sharing issues
-            mesh.material = new THREE.MeshLambertMaterial({
-              color: "#cccccc", // Light gray instead of white
-              side: THREE.DoubleSide,
-              transparent: false,
-              opacity: 1,
-            })
+            newMaterial = whiteMaterials.current.get(mesh.uuid)
+          } else if (materialMode === "normal") {
+            newMaterial = normalMaterial
           }
 
-          // Ensure the material is properly updated
-          mesh.material.needsUpdate = true
+          if (newMaterial) {
+            mesh.material = newMaterial
+          }
         }
       })
-    }, [scene, materialMode])
+    }, [scene, materialMode, normalMaterial])
 
     return <primitive ref={ref} object={scene} />
   },
