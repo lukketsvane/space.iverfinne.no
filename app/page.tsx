@@ -688,7 +688,7 @@ function GalleryPage() {
     const newLight: Light = {
       id: Date.now(),
       visible: true,
-      position: [-5, 5, -5],
+      position: [-1, 1, -1],
       targetPosition: [0, 0, 0],
       intensity: 1,
       kelvin: 5500,
