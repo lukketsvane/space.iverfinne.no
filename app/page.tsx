@@ -11,13 +11,15 @@ import {
 } from "@/components/ui/context-menu"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Textarea } from "@/components/ui/textarea"
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
+import { Slider } from "@/components/ui/slider"
 
 import type React from "react"
 
 import { useState, useRef, useEffect, Suspense, useCallback, Fragment } from "react"
 import { useRouter, useSearchParams } from "next/navigation"
-import { Canvas } from "@react-three/fiber"
-import { useGLTF, OrbitControls, Html, useProgress } from "@react-three/drei"
+import { Canvas, useFrame } from "@react-three/fiber"
+import { useGLTF, OrbitControls, Html, useProgress, SpotLight, SpotLightHelper } from "@react-three/drei"
 import {
   Upload,
   FolderIcon,
@@ -36,11 +38,14 @@ import {
   ListFilter,
   LoaderIcon,
   Info,
+  Plus,
+  Minus,
 } from "lucide-react"
 import { upload } from "@vercel/blob/client"
 import useSWR, { useSWRConfig } from "swr"
 import { Toaster, toast } from "sonner"
 import * as THREE from "three"
+import { useGesture } from "@use-gesture/react"
 
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -107,9 +112,12 @@ interface GalleryContents {
 interface Light {
   id: number
   position: [number, number, number]
+  targetPosition: [number, number, number]
   intensity: number
   kelvin: number
   decay: number
+  angle: number // in degrees
+  penumbra: number // 0-1
 }
 
 // --- Data Fetching ---
@@ -129,19 +137,21 @@ function ModelViewer({ modelUrl, materialMode }: { modelUrl: string; materialMod
   const gltf = useGLTF(modelUrl)
   const scene = gltf.scene.clone(true)
 
-  const originalMaterials = new Map<string, THREE.Material | THREE.Material[]>()
-  scene.traverse((child) => {
-    if ((child as THREE.Mesh).isMesh) {
-      originalMaterials.set(child.uuid, (child as THREE.Mesh).material)
-    }
-  })
+  const originalMaterials = useRef(new Map<string, THREE.Material | THREE.Material[]>())
+  useEffect(() => {
+    scene.traverse((child) => {
+      if ((child as THREE.Mesh).isMesh) {
+        originalMaterials.current.set(child.uuid, (child as THREE.Mesh).material)
+      }
+    })
+  }, [scene])
 
   useEffect(() => {
     scene.traverse((child) => {
       if ((child as THREE.Mesh).isMesh) {
         const mesh = child as THREE.Mesh
+        const originalMaterial = originalMaterials.current.get(mesh.uuid)
         if (materialMode === "pbr") {
-          const originalMaterial = originalMaterials.get(mesh.uuid)
           if (originalMaterial) mesh.material = originalMaterial
         } else if (materialMode === "normal") {
           mesh.material = new THREE.MeshNormalMaterial()
@@ -150,9 +160,58 @@ function ModelViewer({ modelUrl, materialMode }: { modelUrl: string; materialMod
         }
       }
     })
-  }, [scene, materialMode, originalMaterials])
+  }, [scene, materialMode])
 
   return <primitive object={scene} />
+}
+
+function SpotLightInScene({
+  light,
+  isSelected,
+  onSelect,
+}: {
+  light: Light
+  isSelected: boolean
+  onSelect: () => void
+}) {
+  const spotLightRef = useRef<THREE.SpotLight>(null!)
+  const target = useRef(new THREE.Object3D())
+  const helperRef = useRef<THREE.SpotLightHelper>()
+
+  useFrame(() => {
+    target.current.position.set(...light.targetPosition)
+    if (helperRef.current) {
+      helperRef.current.update()
+    }
+  })
+
+  const lightColor = new THREE.Color(
+    kelvinToRgb(light.kelvin).r,
+    kelvinToRgb(light.kelvin).g,
+    kelvinToRgb(light.kelvin).b,
+  )
+
+  return (
+    <>
+      <SpotLight
+        ref={spotLightRef}
+        position={light.position}
+        target={target.current}
+        color={lightColor}
+        intensity={light.intensity}
+        angle={THREE.MathUtils.degToRad(light.angle)}
+        penumbra={light.penumbra}
+        decay={light.decay}
+        castShadow
+      />
+      <primitive object={target.current} />
+      {isSelected && <SpotLightHelper light={spotLightRef.current} ref={helperRef} color={lightColor} />}
+      <mesh position={light.position} onClick={onSelect} onPointerOver={(e) => e.stopPropagation()}>
+        <sphereGeometry args={[0.2, 16, 16]} />
+        <meshBasicMaterial color={isSelected ? "yellow" : lightColor} wireframe />
+      </mesh>
+    </>
+  )
 }
 
 // --- Main Application Component ---
@@ -211,10 +270,38 @@ function GalleryPage() {
   const [bgColor2, setBgColor2] = useState("#1a1a1a")
   const [bgImage, setBgImage] = useState<string | null>(null)
   const [lights, setLights] = useState<Light[]>([
-    { id: Date.now() + 1, position: [5, 5, 5], intensity: 10.0, kelvin: 6500, decay: 0.0 },
-    { id: Date.now() + 2, position: [-5, 5, 5], intensity: 10.0, kelvin: 9600, decay: 1.0 },
-    { id: Date.now() + 3, position: [0, -5, -5], intensity: 9.1, kelvin: 2600, decay: 1.0 },
+    {
+      id: Date.now() + 1,
+      position: [5, 5, 5],
+      targetPosition: [0, 0, 0],
+      intensity: 10.0,
+      kelvin: 6500,
+      decay: 2,
+      angle: 30,
+      penumbra: 0.2,
+    },
+    {
+      id: Date.now() + 2,
+      position: [-5, 5, 5],
+      targetPosition: [0, 0, 0],
+      intensity: 10.0,
+      kelvin: 9600,
+      decay: 2,
+      angle: 30,
+      penumbra: 0.2,
+    },
+    {
+      id: Date.now() + 3,
+      position: [0, 5, -5],
+      targetPosition: [0, 0, 0],
+      intensity: 9.1,
+      kelvin: 2600,
+      decay: 2,
+      angle: 30,
+      penumbra: 0.2,
+    },
   ])
+  const [selectedLightId, setSelectedLightId] = useState<number | null>(lights[0].id)
 
   const [panelPosition, setPanelPosition] = useState({ x: 0, y: 0 })
   const [isDraggingPanel, setIsDraggingPanel] = useState(false)
@@ -222,9 +309,7 @@ function GalleryPage() {
   const panelRef = useRef<HTMLDivElement>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
   const [isOrbitControlsEnabled, setIsOrbitControlsEnabled] = useState(true)
-  const isMovingLight = useRef(false)
-  const dragStartRef = useRef<{ x: number; y: number } | null>(null)
-  const tipShown = useRef(false)
+  const [isShiftDown, setIsShiftDown] = useState(false)
 
   const filteredFolders =
     gallery?.folders?.filter((folder) => folder.name.toLowerCase().includes(searchQuery.toLowerCase())) ?? []
@@ -354,7 +439,7 @@ function GalleryPage() {
     const newBlob = await upload(pathname, file, {
       access: "public",
       handleUploadUrl: "/api/upload",
-      allowOverwrite: true,
+      clientPayload: JSON.stringify({ isThumbnail: true }),
     })
     await handleModelUpdate(selectedModel.id, { thumbnail_url: newBlob.url })
   }
@@ -385,6 +470,7 @@ function GalleryPage() {
 
   const handleViewerKeyDown = useCallback(
     (event: KeyboardEvent) => {
+      if (event.key === "Shift") setIsShiftDown(true)
       if (!selectedModel || !gallery?.models || gallery.models.length === 0) return
       const currentIndex = gallery.models.findIndex((m) => m.id === selectedModel.id)
       if (currentIndex === -1) return
@@ -398,18 +484,26 @@ function GalleryPage() {
     [selectedModel, gallery?.models, searchParams, router],
   )
 
+  const handleViewerKeyUp = useCallback((event: KeyboardEvent) => {
+    if (event.key === "Shift") setIsShiftDown(false)
+  }, [])
+
   useEffect(() => {
     window.addEventListener("keydown", handleViewerKeyDown)
-    return () => window.removeEventListener("keydown", handleViewerKeyDown)
-  }, [handleViewerKeyDown])
+    window.addEventListener("keyup", handleViewerKeyUp)
+    return () => {
+      window.removeEventListener("keydown", handleViewerKeyDown)
+      window.removeEventListener("keyup", handleViewerKeyUp)
+    }
+  }, [handleViewerKeyDown, handleViewerKeyUp])
 
-  // Other effects for dragging, tips, etc. remain largely the same...
   const handlePanelDragStart = (e: React.PointerEvent<HTMLDivElement>) => {
-    if ((e.target as HTMLElement).closest("button, input, .slider-thumb, .editable-value")) return
+    if ((e.target as HTMLElement).closest("button, input, [role=slider], a")) return
     e.preventDefault()
     setIsDraggingPanel(true)
     dragStartPos.current = { x: e.clientX - panelPosition.x, y: e.clientY - panelPosition.y }
     document.body.style.cursor = "grabbing"
+    document.body.classList.add("select-none")
   }
   useEffect(() => {
     const handlePanelDragMove = (e: PointerEvent) => {
@@ -425,6 +519,7 @@ function GalleryPage() {
     const handlePanelDragEnd = () => {
       setIsDraggingPanel(false)
       document.body.style.cursor = "auto"
+      document.body.classList.remove("select-none")
     }
     if (isDraggingPanel) {
       window.addEventListener("pointermove", handlePanelDragMove)
@@ -452,10 +547,13 @@ function GalleryPage() {
     setLights((prevLights) =>
       prevLights.map((light) => ({
         ...light,
-        position: [(Math.random() - 0.5) * 20, (Math.random() - 0.5) * 20, (Math.random() - 0.5) * 20],
-        intensity: Math.random() * 10,
+        position: [(Math.random() - 0.5) * 20, Math.random() * 10, (Math.random() - 0.5) * 20],
+        targetPosition: [(Math.random() - 0.5) * 10, 0, (Math.random() - 0.5) * 10],
+        intensity: Math.random() * 20,
         kelvin: Math.floor(Math.random() * 11000) + 1000,
         decay: Math.random() * 2,
+        angle: Math.random() * 60 + 10,
+        penumbra: Math.random(),
       })),
     )
     toast.success("Lighting randomized!")
@@ -475,6 +573,15 @@ function GalleryPage() {
     }
   }, [modelId, randomizeLights])
 
+  const handleLightChange = (id: number, newValues: Partial<Omit<Light, "id">>) => {
+    setLights(lights.map((light) => (light.id === id ? { ...light, ...newValues } : light)))
+  }
+
+  const handleLightTargetMove = (point: THREE.Vector3) => {
+    if (!selectedLightId) return
+    handleLightChange(selectedLightId, { targetPosition: [point.x, point.y, point.z] })
+  }
+
   // --- Render Logic ---
   if (modelId) {
     if (!selectedModel) {
@@ -487,22 +594,30 @@ function GalleryPage() {
     return (
       <div className="w-full h-screen relative" style={backgroundStyle}>
         <Toaster richColors />
-        <Canvas camera={{ fov: 50, position: [0, 1, 5] }}>
+        <Canvas
+          shadows
+          camera={{ fov: 50, position: [0, 2, 8] }}
+          onPointerMissed={(e) => e.button === 0 && setSelectedLightId(null)}
+        >
           <Suspense fallback={<Loader />}>
             {lights.map((light) => (
-              <pointLight
+              <SpotLightInScene
                 key={light.id}
-                position={light.position}
-                intensity={light.intensity}
-                color={
-                  new THREE.Color(kelvinToRgb(light.kelvin).r, kelvinToRgb(light.kelvin).g, kelvinToRgb(light.kelvin).b)
-                }
-                decay={light.decay}
+                light={light}
+                isSelected={light.id === selectedLightId}
+                onSelect={() => setSelectedLightId(light.id)}
               />
             ))}
             <ModelViewer modelUrl={selectedModel.model_url} materialMode={materialMode} />
           </Suspense>
           <OrbitControls enabled={isOrbitControlsEnabled} />
+          <ambientLight intensity={0.1} />
+          {isShiftDown && selectedLightId && (
+            <mesh onPointerMove={(e) => handleLightTargetMove(e.point)} visible={false}>
+              <planeGeometry args={[100, 100]} />
+              <meshBasicMaterial />
+            </mesh>
+          )}
         </Canvas>
         <div className="absolute top-4 left-4">
           <Button variant="ghost" size="icon" onClick={handleCloseViewer} className="text-white hover:bg-white/20">
@@ -513,8 +628,14 @@ function GalleryPage() {
           ref={panelRef}
           className="absolute top-4 right-4 w-[350px] bg-black/50 backdrop-blur-sm border border-white/20 rounded-lg text-white z-10 flex flex-col max-h-[calc(100vh-2rem)]"
           style={{ transform: `translate(${panelPosition.x}px, ${panelPosition.y}px)` }}
+          onPointerDown={() => setIsOrbitControlsEnabled(false)}
+          onPointerUp={() => setIsOrbitControlsEnabled(true)}
         >
-          <div className="flex items-center justify-between p-4 cursor-grab" onPointerDown={handlePanelDragStart}>
+          <div
+            className="flex items-center justify-between p-4 cursor-grab"
+            onPointerDown={handlePanelDragStart}
+            onPointerUp={() => setIsOrbitControlsEnabled(true)}
+          >
             <h2 className="text-lg font-semibold">Settings</h2>
             <button onClick={() => setIsSettingsPanelOpen(!isSettingsPanelOpen)} className="z-10 p-1 -m-1">
               <ChevronDown className={`h-5 w-5 transition-transform ${isSettingsPanelOpen ? "rotate-180" : ""}`} />
@@ -528,6 +649,8 @@ function GalleryPage() {
               onThumbnailUpload={handleThumbnailUpload}
               lights={lights}
               onLightsChange={setLights}
+              selectedLightId={selectedLightId}
+              onSelectLight={setSelectedLightId}
               bgType={bgType}
               onBgTypeChange={setBgType}
               bgColor1={bgColor1}
@@ -569,6 +692,11 @@ function GalleryPage() {
             <Download />
           </Button>
         </div>
+        {isShiftDown && (
+          <div className="absolute bottom-4 right-4 bg-black/50 backdrop-blur-sm p-2 rounded-lg text-white text-sm">
+            Aiming light: Drag to move target
+          </div>
+        )}
       </div>
     )
   }
@@ -1107,8 +1235,8 @@ function EditableValue({
   className,
   inputClassName,
 }: {
-  value: number
-  onSave: (newValue: number) => void
+  value: string | number
+  onSave: (newValue: string) => void
   units?: string
   className?: string
   inputClassName?: string
@@ -1118,6 +1246,10 @@ function EditableValue({
   const inputRef = useRef<HTMLInputElement>(null)
 
   useEffect(() => {
+    setCurrentValue(value.toString())
+  }, [value])
+
+  useEffect(() => {
     if (isEditing && inputRef.current) {
       inputRef.current.focus()
       inputRef.current.select()
@@ -1125,12 +1257,7 @@ function EditableValue({
   }, [isEditing])
 
   const handleSave = () => {
-    const numericValue = Number.parseFloat(currentValue)
-    if (!isNaN(numericValue)) {
-      onSave(numericValue)
-    } else {
-      setCurrentValue(value.toString())
-    }
+    onSave(currentValue)
     setIsEditing(false)
   }
 
@@ -1146,16 +1273,75 @@ function EditableValue({
           if (e.key === "Enter") handleSave()
           if (e.key === "Escape") setIsEditing(false)
         }}
-        className={`h-6 text-xs w-16 text-right bg-white/20 border-white/30 ${inputClassName}`}
+        className={`h-6 text-xs w-full text-right bg-white/20 border-white/30 ${inputClassName}`}
       />
     )
   }
 
   return (
-    <span onClick={() => setIsEditing(true)} className={`cursor-pointer text-xs w-16 text-right ${className}`}>
-      {value.toFixed(units === "K" ? 0 : 1)}
+    <span
+      onClick={() => setIsEditing(true)}
+      className={`cursor-pointer text-xs w-full text-right truncate ${className}`}
+      title={typeof value === "number" ? value.toFixed(2) : value}
+    >
+      {typeof value === "number" ? value.toFixed(units === "K" ? 0 : 1) : value}
       {units}
     </span>
+  )
+}
+
+function DirectionalPad({
+  value,
+  onChange,
+}: {
+  value: { x: number; z: number }
+  onChange: (newValue: { x: number; z: number }) => void
+}) {
+  const padRef = useRef<HTMLDivElement>(null)
+  const handleRef = useRef<HTMLDivElement>(null)
+
+  const bind = useGesture(
+    {
+      onDrag: ({ xy, down }) => {
+        if (!padRef.current) return
+        const rect = padRef.current.getBoundingClientRect()
+        const size = rect.width
+        const halfSize = size / 2
+        let x = xy[0] - rect.left - halfSize
+        let z = xy[1] - rect.top - halfSize
+
+        const distance = Math.sqrt(x * x + z * z)
+        if (distance > halfSize) {
+          x = (x / distance) * halfSize
+          z = (z / distance) * halfSize
+        }
+
+        onChange({ x: (x / halfSize) * 5, z: (z / halfSize) * 5 }) // Scale to a reasonable range
+      },
+    },
+    { drag: { filterTaps: true } },
+  )
+
+  const handleX = (value.x / 5) * 50
+  const handleZ = (value.z / 5) * 50
+
+  return (
+    <div
+      ref={padRef}
+      {...bind()}
+      className="w-24 h-24 bg-white/10 rounded-full relative cursor-pointer border border-white/20 flex items-center justify-center"
+    >
+      <div className="w-full h-px bg-white/20 absolute" />
+      <div className="h-full w-px bg-white/20 absolute" />
+      <div
+        ref={handleRef}
+        className="w-4 h-4 bg-blue-500 rounded-full absolute border-2 border-white"
+        style={{
+          transform: `translate(${handleX}px, ${handleZ}px)`,
+          touchAction: "none",
+        }}
+      />
+    </div>
   )
 }
 
@@ -1166,6 +1352,8 @@ function SettingsPanel({
   onThumbnailUpload,
   lights,
   onLightsChange,
+  selectedLightId,
+  onSelectLight,
   bgType,
   onBgTypeChange,
   bgColor1,
@@ -1181,6 +1369,8 @@ function SettingsPanel({
   onThumbnailUpload: (file: File) => void
   lights: Light[]
   onLightsChange: (lights: Light[]) => void
+  selectedLightId: number | null
+  onSelectLight: (id: number | null) => void
   bgType: "color" | "gradient" | "image"
   onBgTypeChange: (type: "color" | "gradient" | "image") => void
   bgColor1: string
@@ -1195,7 +1385,7 @@ function SettingsPanel({
   const thumbnailInputRef = useRef<HTMLInputElement>(null)
   const bgImageInputRef = useRef<HTMLInputElement>(null)
 
-  const { data: allFolders, error: foldersError } = useSWR<Folder[]>("/api/folders/all", fetcher)
+  const { data: allFolders } = useSWR<Folder[]>("/api/folders/all", fetcher)
 
   useEffect(() => {
     setName(model.name)
@@ -1203,12 +1393,6 @@ function SettingsPanel({
 
   const handleNameBlur = () => {
     if (name !== model.name) onUpdate(model.id, { name })
-  }
-
-  const handleFolderChange = (newFolderId: string) => {
-    const folderId = newFolderId === "root" ? null : newFolderId
-    onUpdate(model.id, { folder_id: folderId })
-    toast.success(`Moved "${model.name}" to a new folder.`)
   }
 
   const handleLightChange = (id: number, newValues: Partial<Omit<Light, "id">>) => {
@@ -1220,9 +1404,12 @@ function SettingsPanel({
       const newLight: Light = {
         id: Date.now(),
         position: [-5, 5, -5],
+        targetPosition: [0, 0, 0],
         intensity: 1,
         kelvin: 5500,
         decay: 1,
+        angle: 45,
+        penumbra: 0.5,
       }
       onLightsChange([...lights, newLight])
     }
@@ -1231,6 +1418,9 @@ function SettingsPanel({
   const removeLight = (id: number) => {
     if (lights.length > 1) {
       onLightsChange(lights.filter((light) => light.id !== id))
+      if (selectedLightId === id) {
+        onSelectLight(lights.find((l) => l.id !== id)?.id || null)
+      }
     }
   }
 
@@ -1245,136 +1435,250 @@ function SettingsPanel({
     }
   }
 
+  const selectedLight = lights.find((l) => l.id === selectedLightId)
+
   return (
     <div className="px-4 pb-4 flex flex-col h-full text-white overflow-y-auto">
-      <div className="space-y-4 flex-1 overflow-y-auto pr-2">
-        <div className="flex items-center justify-between">
-          <h3 className="text-sm font-semibold">Name</h3>
-          <EditableValue value={Number.parseFloat(name)} onSave={handleNameBlur} />
-        </div>
-        <div className="flex items-center justify-between">
-          <h3 className="text-sm font-semibold">Folder</h3>
-          <Select value={model.folder_id || "root"} onValueChange={handleFolderChange}>
-            <SelectTrigger className="bg-white/10 border-white/30">
-              <SelectValue placeholder="Select folder" />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="root">Assets (Root)</SelectItem>
-              {allFolders?.map((folder) => (
-                <SelectItem key={folder.id} value={folder.id}>
-                  {folder.name}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-        </div>
-        <div className="flex items-center justify-between">
-          <h3 className="text-sm font-semibold">Lights</h3>
-          <div className="flex gap-2">
-            {lights.map((light) => (
-              <div key={light.id} className="flex flex-col items-center">
-                <EditableValue
-                  value={light.position[0]}
-                  onSave={(newValue) =>
-                    handleLightChange(light.id, { position: [newValue, light.position[1], light.position[2]] })
-                  }
-                  units="m"
-                />
-                <EditableValue
-                  value={light.position[1]}
-                  onSave={(newValue) =>
-                    handleLightChange(light.id, { position: [light.position[0], newValue, light.position[2]] })
-                  }
-                  units="m"
-                />
-                <EditableValue
-                  value={light.position[2]}
-                  onSave={(newValue) =>
-                    handleLightChange(light.id, { position: [light.position[0], light.position[1], newValue] })
-                  }
-                  units="m"
-                />
-                <EditableValue
-                  value={light.intensity}
-                  onSave={(newValue) => handleLightChange(light.id, { intensity: newValue })}
-                  units="lx"
-                />
-                <EditableValue
-                  value={light.kelvin}
-                  onSave={(newValue) => handleLightChange(light.id, { kelvin: newValue })}
-                  units="K"
-                />
-                <EditableValue
-                  value={light.decay}
-                  onSave={(newValue) => handleLightChange(light.id, { decay: newValue })}
-                />
-                <Button variant="ghost" size="icon" onClick={() => removeLight(light.id)}>
-                  <Trash2 className="h-4 w-4" />
-                </Button>
-              </div>
-            ))}
-            <Button variant="ghost" size="icon" onClick={addLight}>
-              <FolderPlus className="h-4 w-4" />
-            </Button>
+      <div className="space-y-4 flex-1 overflow-y-auto pr-2 -mr-2">
+        <div className="space-y-2">
+          <h3 className="text-sm font-semibold">Model</h3>
+          <div className="flex items-center justify-between text-xs">
+            <label>Name</label>
+            <div className="w-1/2">
+              <EditableValue value={name} onSave={(newName) => onUpdate(model.id, { name: newName })} />
+            </div>
           </div>
-        </div>
-        <div className="flex items-center justify-between">
-          <h3 className="text-sm font-semibold">Background Type</h3>
-          <Select value={bgType} onValueChange={onBgTypeChange}>
-            <SelectTrigger className="bg-white/10 border-white/30">
-              <SelectValue placeholder="Select background type" />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="color">Color</SelectItem>
-              <SelectItem value="gradient">Gradient</SelectItem>
-              <SelectItem value="image">Image</SelectItem>
-            </SelectContent>
-          </Select>
-        </div>
-        {bgType === "color" && (
-          <div className="flex items-center justify-between">
-            <h3 className="text-sm font-semibold">Background Color</h3>
+          <div className="flex items-center justify-between text-xs">
+            <label>Thumbnail</label>
+            <Button size="sm" className="text-xs h-6" onClick={() => thumbnailInputRef.current?.click()}>
+              Upload
+            </Button>
             <input
-              type="color"
-              value={bgColor1}
-              onChange={(e) => onBgColor1Change(e.target.value)}
-              className="w-10 h-10"
+              type="file"
+              ref={thumbnailInputRef}
+              className="hidden"
+              accept="image/*"
+              onChange={(e) => e.target.files && onThumbnailUpload(e.target.files[0])}
             />
           </div>
-        )}
-        {bgType === "gradient" && (
-          <>
-            <div className="flex items-center justify-between">
-              <h3 className="text-sm font-semibold">Gradient Color 1</h3>
+          <div className="flex items-center justify-between text-xs">
+            <label>Delete Model</label>
+            {!showDeleteConfirm ? (
+              <Button
+                variant="destructive"
+                size="sm"
+                className="text-xs h-6"
+                onClick={() => setShowDeleteConfirm(true)}
+              >
+                Delete
+              </Button>
+            ) : (
+              <div className="flex gap-1">
+                <Button size="sm" className="text-xs h-6" onClick={() => setShowDeleteConfirm(false)}>
+                  Cancel
+                </Button>
+                <Button variant="destructive" size="sm" className="text-xs h-6" onClick={onDelete}>
+                  Confirm
+                </Button>
+              </div>
+            )}
+          </div>
+        </div>
+        <Separator className="bg-white/20" />
+        <div className="space-y-2">
+          <h3 className="text-sm font-semibold">Scene</h3>
+          <div className="flex items-center justify-between text-xs">
+            <label>Background</label>
+            <Select value={bgType} onValueChange={(v) => onBgTypeChange(v as any)}>
+              <SelectTrigger className="w-1/2 h-6 text-xs bg-white/10 border-white/30">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="color">Color</SelectItem>
+                <SelectItem value="gradient">Gradient</SelectItem>
+                <SelectItem value="image">Image</SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
+          {bgType === "color" && (
+            <div className="flex items-center justify-between text-xs">
+              <label>Color</label>
               <input
                 type="color"
                 value={bgColor1}
                 onChange={(e) => onBgColor1Change(e.target.value)}
-                className="w-10 h-10"
+                className="w-6 h-6 p-0 bg-transparent border-none"
               />
             </div>
-            <div className="flex items-center justify-between">
-              <h3 className="text-sm font-semibold">Gradient Color 2</h3>
+          )}
+          {bgType === "gradient" && (
+            <>
+              <div className="flex items-center justify-between text-xs">
+                <label>Top Color</label>
+                <input
+                  type="color"
+                  value={bgColor1}
+                  onChange={(e) => onBgColor1Change(e.target.value)}
+                  className="w-6 h-6 p-0 bg-transparent border-none"
+                />
+              </div>
+              <div className="flex items-center justify-between text-xs">
+                <label>Bottom Color</label>
+                <input
+                  type="color"
+                  value={bgColor2}
+                  onChange={(e) => onBgColor2Change(e.target.value)}
+                  className="w-6 h-6 p-0 bg-transparent border-none"
+                />
+              </div>
+            </>
+          )}
+          {bgType === "image" && (
+            <div className="flex items-center justify-between text-xs">
+              <label>Image</label>
+              <Button size="sm" className="text-xs h-6" onClick={() => bgImageInputRef.current?.click()}>
+                Upload
+              </Button>
               <input
-                type="color"
-                value={bgColor2}
-                onChange={(e) => onBgColor2Change(e.target.value)}
-                className="w-10 h-10"
+                type="file"
+                ref={bgImageInputRef}
+                className="hidden"
+                accept="image/*"
+                onChange={handleBgImageUpload}
               />
             </div>
-          </>
-        )}
-        {bgType === "image" && (
+          )}
+        </div>
+        <Separator className="bg-white/20" />
+        <Tabs
+          value={selectedLightId?.toString()}
+          onValueChange={(val) => onSelectLight(Number(val))}
+          className="w-full"
+        >
           <div className="flex items-center justify-between">
-            <h3 className="text-sm font-semibold">Background Image</h3>
-            <input
-              type="file"
-              ref={bgImageInputRef}
-              onChange={(e) => handleBgImageUpload(e)}
-              className="bg-white/10 border-white/30"
-            />
+            <h3 className="text-sm font-semibold">Lights</h3>
+            <TabsList className="h-7">
+              {lights.map((light, i) => (
+                <TabsTrigger key={light.id} value={light.id.toString()} className="h-5 text-xs px-2">
+                  {i + 1}
+                </TabsTrigger>
+              ))}
+            </TabsList>
           </div>
-        )}
+          {lights.map((light) => (
+            <TabsContent key={light.id} value={light.id.toString()} className="space-y-3 text-xs mt-2">
+              <div className="flex items-center justify-between">
+                <label>Position (X, Y, Z)</label>
+                <div className="flex gap-1 w-1/2">
+                  <EditableValue
+                    value={light.position[0]}
+                    onSave={(v) =>
+                      handleLightChange(light.id, { position: [Number(v), light.position[1], light.position[2]] })
+                    }
+                  />
+                  <EditableValue
+                    value={light.position[1]}
+                    onSave={(v) =>
+                      handleLightChange(light.id, { position: [light.position[0], Number(v), light.position[2]] })
+                    }
+                  />
+                  <EditableValue
+                    value={light.position[2]}
+                    onSave={(v) =>
+                      handleLightChange(light.id, { position: [light.position[0], light.position[1], Number(v)] })
+                    }
+                  />
+                </div>
+              </div>
+              <div className="flex items-start justify-between">
+                <label className="pt-2">Target (X, Z)</label>
+                <DirectionalPad
+                  value={{ x: light.targetPosition[0], z: light.targetPosition[2] }}
+                  onChange={({ x, z }) =>
+                    handleLightChange(light.id, { targetPosition: [x, light.targetPosition[1], z] })
+                  }
+                />
+              </div>
+              <div className="flex items-center justify-between">
+                <label>Target Height (Y)</label>
+                <Slider
+                  value={[light.targetPosition[1]]}
+                  onValueChange={([v]) =>
+                    handleLightChange(light.id, {
+                      targetPosition: [light.targetPosition[0], v, light.targetPosition[2]],
+                    })
+                  }
+                  min={-10}
+                  max={10}
+                  step={0.1}
+                  className="w-1/2"
+                />
+              </div>
+              <div className="flex items-center justify-between">
+                <label>Intensity</label>
+                <Slider
+                  value={[light.intensity]}
+                  onValueChange={([v]) => handleLightChange(light.id, { intensity: v })}
+                  min={0}
+                  max={50}
+                  step={0.1}
+                  className="w-1/2"
+                />
+              </div>
+              <div className="flex items-center justify-between">
+                <label>Color Temp</label>
+                <Slider
+                  value={[light.kelvin]}
+                  onValueChange={([v]) => handleLightChange(light.id, { kelvin: v })}
+                  min={1000}
+                  max={12000}
+                  step={100}
+                  className="w-1/2"
+                />
+              </div>
+              <div className="flex items-center justify-between">
+                <label>Cone Angle</label>
+                <Slider
+                  value={[light.angle]}
+                  onValueChange={([v]) => handleLightChange(light.id, { angle: v })}
+                  min={0}
+                  max={90}
+                  step={1}
+                  className="w-1/2"
+                />
+              </div>
+              <div className="flex items-center justify-between">
+                <label>Penumbra</label>
+                <Slider
+                  value={[light.penumbra]}
+                  onValueChange={([v]) => handleLightChange(light.id, { penumbra: v })}
+                  min={0}
+                  max={1}
+                  step={0.01}
+                  className="w-1/2"
+                />
+              </div>
+              <div className="flex justify-end">
+                <Button
+                  variant="destructive"
+                  size="sm"
+                  className="text-xs h-6"
+                  onClick={() => removeLight(light.id)}
+                  disabled={lights.length <= 1}
+                >
+                  <Minus className="w-3 h-3 mr-1" />
+                  Remove Light
+                </Button>
+              </div>
+            </TabsContent>
+          ))}
+        </Tabs>
+        <div className="flex justify-end">
+          <Button size="sm" className="text-xs h-6" onClick={addLight} disabled={lights.length >= 3}>
+            <Plus className="w-3 h-3 mr-1" />
+            Add Light
+          </Button>
+        </div>
       </div>
     </div>
   )
