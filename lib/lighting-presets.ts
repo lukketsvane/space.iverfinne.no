@@ -34,6 +34,29 @@ const defaultStudioLights: LightPreset[] = [
 
 export const lightingPresets: { name: string; lights: LightPreset[] }[] = [
   {
+    name: "Studio",
+    lights: [
+      {
+        position: [-5, 5, -5] as [number, number, number],
+        targetPosition: [0, 0, 0] as [number, number, number],
+        intensity: 2,
+        kelvin: 5500,
+        decay: 1,
+        angle: 45,
+        penumbra: 0.5,
+      },
+      {
+        position: [5, 3, 5] as [number, number, number],
+        targetPosition: [0, 0, 0] as [number, number, number],
+        intensity: 1,
+        kelvin: 3200,
+        decay: 1,
+        angle: 60,
+        penumbra: 0.3,
+      },
+    ],
+  },
+  {
     name: "Default Studio",
     lights: defaultStudioLights,
   },
