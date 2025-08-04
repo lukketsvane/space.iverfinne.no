@@ -1,42 +1,37 @@
+import { supabaseServer as supabase } from "@/lib/supabase-server"
 import { type NextRequest, NextResponse } from "next/server"
-import { neon } from "@neondatabase/serverless"
 
-const sql = neon(process.env.NEON_NEON_DATABASE_URL!)
+const PAGE_SIZE = 20
 
 export async function GET(request: NextRequest) {
+  const { searchParams } = new URL(request.url)
+  const page = Number.parseInt(searchParams.get("page") || "0", 10)
+  const offset = page * PAGE_SIZE
+
   try {
-    const { searchParams } = new URL(request.url)
-    const page = Number.parseInt(searchParams.get("page") || "0")
-    const limit = 20
-    const offset = page * limit
+    const {
+      data: models,
+      error,
+      count,
+    } = await supabase
+      .from("models")
+      .select("*", { count: "exact" })
+      .eq("is_public", true)
+      .order("created_at", { ascending: false })
+      .range(offset, offset + PAGE_SIZE - 1)
 
-    // Get public models with pagination
-    const models = await sql`
-      SELECT 
-        id,
-        name,
-        model_url,
-        thumbnail_url,
-        created_at,
-        view_settings,
-        is_public,
-        folder_id
-      FROM models 
-      WHERE is_public = true 
-      ORDER BY created_at DESC 
-      LIMIT ${limit + 1} 
-      OFFSET ${offset}
-    `
-
-    const hasMore = models.length > limit
-    const modelsToReturn = hasMore ? models.slice(0, -1) : models
+    if (error) {
+      console.error("Supabase error fetching public models:", error.message)
+      throw new Error(error.message)
+    }
 
     return NextResponse.json({
-      models: modelsToReturn,
-      nextPage: hasMore ? page + 1 : null,
+      models,
+      nextPage: offset + PAGE_SIZE < (count ?? 0) ? page + 1 : null,
     })
   } catch (error) {
-    console.error("Error fetching public models:", error)
-    return NextResponse.json({ error: "Failed to fetch models" }, { status: 500 })
+    const message = error instanceof Error ? error.message : "Unknown error"
+    console.error("Error in /api/public/models:", message)
+    return NextResponse.json({ error: `Failed to fetch public models: ${message}` }, { status: 500 })
   }
 }
