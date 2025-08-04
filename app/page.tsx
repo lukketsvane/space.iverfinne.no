@@ -1,3 +1,4 @@
+"use client";
 import { LoaderIcon } from "lucide-react"
 import dynamic from "next/dynamic"
 import GalleryClientWrapper from "./gallery-client-wrapper"
