@@ -147,10 +147,26 @@ const ModelViewer = forwardRef<THREE.Group, { modelUrl: string; materialMode: "p
             const originalMaterial = originalMaterials.current.get(mesh.uuid)
             if (originalMaterial) mesh.material = originalMaterial
           } else if (materialMode === "normal") {
-            mesh.material = new THREE.MeshNormalMaterial()
+            // Create a new normal material for each mesh to avoid sharing issues
+            mesh.material = new THREE.MeshNormalMaterial({
+              side: THREE.DoubleSide,
+              transparent: false,
+              opacity: 1,
+            })
           } else if (materialMode === "white") {
-            mesh.material = new THREE.MeshStandardMaterial({ color: "white", roughness: 0.5, metalness: 0.1 })
+            // Create a new basic material for each mesh to avoid sharing issues
+            mesh.material = new THREE.MeshStandardMaterial({
+              color: "white",
+              roughness: 0.5,
+              metalness: 0.1,
+              side: THREE.DoubleSide,
+              transparent: false,
+              opacity: 1,
+            })
           }
+
+          // Ensure the material is properly updated
+          mesh.material.needsUpdate = true
         }
       })
     }, [scene, materialMode])
@@ -280,7 +296,7 @@ function GalleryPage() {
   const [editingFolder, setEditingFolder] = useState<Folder | null>(null)
 
   // Viewer settings state
-  const [materialMode, setMaterialMode] = useState<"pbr" | "normal" | "white">("pbr")
+  const [materialMode, setMaterialMode] = useState<"pbr" | "normal" | "white">("white") // Changed from "pbr" to "white"
   const [isDragging, setIsDragging] = useState(false)
   const [isSettingsPanelOpen, setIsSettingsPanelOpen] = useState(true)
   const [lightsEnabled, setLightsEnabled] = useState(true)
@@ -869,6 +885,14 @@ function GalleryPage() {
         </div>
         <div className="absolute bottom-4 left-1/2 -translate-x-1/2 bg-black/50 backdrop-blur-sm p-2 rounded-full flex items-center gap-1">
           <Button
+            variant={materialMode === "white" ? "secondary" : "ghost"} // This should be active by default now
+            size="icon"
+            onClick={() => setMaterialMode("white")}
+            className="text-white rounded-full"
+          >
+            <div className="w-6 h-6 rounded-full bg-white" />
+          </Button>
+          <Button
             variant={materialMode === "pbr" ? "secondary" : "ghost"}
             size="icon"
             onClick={() => setMaterialMode("pbr")}
@@ -883,14 +907,6 @@ function GalleryPage() {
             className="text-white rounded-full"
           >
             <div className="w-6 h-6 rounded-full bg-gradient-to-br from-red-500 via-green-500 to-blue-500" />
-          </Button>
-          <Button
-            variant={materialMode === "white" ? "secondary" : "ghost"}
-            size="icon"
-            onClick={() => setMaterialMode("white")}
-            className="text-white rounded-full"
-          >
-            <div className="w-6 h-6 rounded-full bg-white" />
           </Button>
           <Separator orientation="vertical" className="h-6 bg-white/20 mx-1" />
           <Button
