@@ -11,8 +11,9 @@ import {
 } from "@/components/ui/context-menu"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Textarea } from "@/components/ui/textarea"
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { Slider } from "@/components/ui/slider"
+import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from "@/components/ui/accordion"
+import { Switch } from "@/components/ui/switch"
 
 import type React from "react"
 
@@ -39,7 +40,9 @@ import {
   LoaderIcon,
   Info,
   Plus,
-  Minus,
+  Eye,
+  EyeOff,
+  CopyIcon as Clone,
 } from "lucide-react"
 import { upload } from "@vercel/blob/client"
 import useSWR, { useSWRConfig } from "swr"
@@ -111,6 +114,7 @@ interface GalleryContents {
 
 interface Light {
   id: number
+  visible: boolean
   position: [number, number, number]
   targetPosition: [number, number, number]
   intensity: number
@@ -184,6 +188,8 @@ function SpotLightInScene({
       helperRef.current.update()
     }
   })
+
+  if (!light.visible) return null
 
   const lightColor = new THREE.Color(
     kelvinToRgb(light.kelvin).r,
@@ -265,6 +271,8 @@ function GalleryPage() {
   const [materialMode, setMaterialMode] = useState<"pbr" | "normal" | "white">("pbr")
   const [isDragging, setIsDragging] = useState(false)
   const [isSettingsPanelOpen, setIsSettingsPanelOpen] = useState(true)
+  const [lightsEnabled, setLightsEnabled] = useState(true)
+  const [environmentEnabled, setEnvironmentEnabled] = useState(true)
   const [bgType, setBgType] = useState<"color" | "gradient" | "image">("color")
   const [bgColor1, setBgColor1] = useState("#000000")
   const [bgColor2, setBgColor2] = useState("#1a1a1a")
@@ -272,6 +280,7 @@ function GalleryPage() {
   const [lights, setLights] = useState<Light[]>([
     {
       id: Date.now() + 1,
+      visible: true,
       position: [5, 5, 5],
       targetPosition: [0, 0, 0],
       intensity: 10.0,
@@ -282,6 +291,7 @@ function GalleryPage() {
     },
     {
       id: Date.now() + 2,
+      visible: true,
       position: [-5, 5, 5],
       targetPosition: [0, 0, 0],
       intensity: 10.0,
@@ -292,6 +302,7 @@ function GalleryPage() {
     },
     {
       id: Date.now() + 3,
+      visible: true,
       position: [0, 5, -5],
       targetPosition: [0, 0, 0],
       intensity: 9.1,
@@ -498,7 +509,7 @@ function GalleryPage() {
   }, [handleViewerKeyDown, handleViewerKeyUp])
 
   const handlePanelDragStart = (e: React.PointerEvent<HTMLDivElement>) => {
-    if ((e.target as HTMLElement).closest("button, input, [role=slider], a")) return
+    if ((e.target as HTMLElement).closest("button, input, [role=slider], a, [role=tab]")) return
     e.preventDefault()
     setIsDraggingPanel(true)
     dragStartPos.current = { x: e.clientX - panelPosition.x, y: e.clientY - panelPosition.y }
@@ -533,12 +544,14 @@ function GalleryPage() {
 
   const backgroundStyle = {
     background:
-      bgType === "gradient"
+      environmentEnabled && bgType === "gradient"
         ? `linear-gradient(to bottom, ${bgColor1}, ${bgColor2})`
-        : bgType === "image"
+        : environmentEnabled && bgType === "image"
           ? `url(${bgImage})`
-          : bgColor1,
-    backgroundImage: bgType === "image" ? `url(${bgImage})` : "",
+          : environmentEnabled
+            ? bgColor1
+            : "#000000",
+    backgroundImage: environmentEnabled && bgType === "image" ? `url(${bgImage})` : "",
     backgroundSize: bgType === "image" ? "cover" : "",
     backgroundPosition: bgType === "image" ? "center" : "",
   }
@@ -582,6 +595,62 @@ function GalleryPage() {
     handleLightChange(selectedLightId, { targetPosition: [point.x, point.y, point.z] })
   }
 
+  const addLight = () => {
+    if (lights.length >= 5) {
+      toast.error("Maximum of 5 lights reached.")
+      return
+    }
+    const newLight: Light = {
+      id: Date.now(),
+      visible: true,
+      position: [-5, 5, -5],
+      targetPosition: [0, 0, 0],
+      intensity: 1,
+      kelvin: 5500,
+      decay: 1,
+      angle: 45,
+      penumbra: 0.5,
+    }
+    setLights([...lights, newLight])
+    setSelectedLightId(newLight.id)
+  }
+
+  const removeLight = (id: number) => {
+    if (lights.length > 1) {
+      setLights(lights.filter((light) => light.id !== id))
+      if (selectedLightId === id) {
+        setSelectedLightId(lights.find((l) => l.id !== id)?.id || null)
+      }
+    } else {
+      toast.error("Cannot remove the last light.")
+    }
+  }
+
+  const toggleLightVisibility = (id: number) => {
+    setLights(lights.map((l) => (l.id === id ? { ...l, visible: !l.visible } : l)))
+  }
+
+  const cloneLight = (id: number) => {
+    if (lights.length >= 5) {
+      toast.error("Maximum of 5 lights reached.")
+      return
+    }
+    const lightToClone = lights.find((l) => l.id === id)
+    if (lightToClone) {
+      const newLight = {
+        ...lightToClone,
+        id: Date.now(),
+        position: [lightToClone.position[0] + 1, lightToClone.position[1], lightToClone.position[2]] as [
+          number,
+          number,
+          number,
+        ],
+      }
+      setLights([...lights, newLight])
+      setSelectedLightId(newLight.id)
+    }
+  }
+
   // --- Render Logic ---
   if (modelId) {
     if (!selectedModel) {
@@ -600,14 +669,15 @@ function GalleryPage() {
           onPointerMissed={(e) => e.button === 0 && setSelectedLightId(null)}
         >
           <Suspense fallback={<Loader />}>
-            {lights.map((light) => (
-              <SpotLightInScene
-                key={light.id}
-                light={light}
-                isSelected={light.id === selectedLightId}
-                onSelect={() => setSelectedLightId(light.id)}
-              />
-            ))}
+            {lightsEnabled &&
+              lights.map((light) => (
+                <SpotLightInScene
+                  key={light.id}
+                  light={light}
+                  isSelected={light.id === selectedLightId}
+                  onSelect={() => setSelectedLightId(light.id)}
+                />
+              ))}
             <ModelViewer modelUrl={selectedModel.model_url} materialMode={materialMode} />
           </Suspense>
           <OrbitControls enabled={isOrbitControlsEnabled} />
@@ -648,9 +718,17 @@ function GalleryPage() {
               onDelete={() => handleDeleteItem({ id: selectedModel.id, type: "model" })}
               onThumbnailUpload={handleThumbnailUpload}
               lights={lights}
-              onLightsChange={setLights}
+              onLightChange={handleLightChange}
+              addLight={addLight}
+              removeLight={removeLight}
+              cloneLight={cloneLight}
+              toggleLightVisibility={toggleLightVisibility}
               selectedLightId={selectedLightId}
               onSelectLight={setSelectedLightId}
+              lightsEnabled={lightsEnabled}
+              onLightsEnabledChange={setLightsEnabled}
+              environmentEnabled={environmentEnabled}
+              onEnvironmentEnabledChange={setEnvironmentEnabled}
               bgType={bgType}
               onBgTypeChange={setBgType}
               bgColor1={bgColor1}
@@ -1298,11 +1376,10 @@ function DirectionalPad({
   onChange: (newValue: { x: number; z: number }) => void
 }) {
   const padRef = useRef<HTMLDivElement>(null)
-  const handleRef = useRef<HTMLDivElement>(null)
 
   const bind = useGesture(
     {
-      onDrag: ({ xy, down }) => {
+      onDrag: ({ xy }) => {
         if (!padRef.current) return
         const rect = padRef.current.getBoundingClientRect()
         const size = rect.width
@@ -1334,7 +1411,6 @@ function DirectionalPad({
       <div className="w-full h-px bg-white/20 absolute" />
       <div className="h-full w-px bg-white/20 absolute" />
       <div
-        ref={handleRef}
         className="w-4 h-4 bg-blue-500 rounded-full absolute border-2 border-white"
         style={{
           transform: `translate(${handleX}px, ${handleZ}px)`,
@@ -1345,15 +1421,119 @@ function DirectionalPad({
   )
 }
 
+function LightSettings({
+  light,
+  onLightChange,
+}: {
+  light: Light
+  onLightChange: (id: number, newValues: Partial<Omit<Light, "id">>) => void
+}) {
+  return (
+    <div className="space-y-3 text-xs mt-2 bg-white/5 p-3 rounded-md">
+      <div className="flex items-center justify-between">
+        <label>Position (X, Y, Z)</label>
+        <div className="flex gap-1 w-1/2">
+          <EditableValue
+            value={light.position[0]}
+            onSave={(v) => onLightChange(light.id, { position: [Number(v), light.position[1], light.position[2]] })}
+          />
+          <EditableValue
+            value={light.position[1]}
+            onSave={(v) => onLightChange(light.id, { position: [light.position[0], Number(v), light.position[2]] })}
+          />
+          <EditableValue
+            value={light.position[2]}
+            onSave={(v) => onLightChange(light.id, { position: [light.position[0], light.position[1], Number(v)] })}
+          />
+        </div>
+      </div>
+      <div className="flex items-start justify-between">
+        <label className="pt-2">Target (X, Z)</label>
+        <DirectionalPad
+          value={{ x: light.targetPosition[0], z: light.targetPosition[2] }}
+          onChange={({ x, z }) => onLightChange(light.id, { targetPosition: [x, light.targetPosition[1], z] })}
+        />
+      </div>
+      <div className="flex items-center justify-between">
+        <label>Target Height (Y)</label>
+        <Slider
+          value={[light.targetPosition[1]]}
+          onValueChange={([v]) =>
+            onLightChange(light.id, {
+              targetPosition: [light.targetPosition[0], v, light.targetPosition[2]],
+            })
+          }
+          min={-10}
+          max={10}
+          step={0.1}
+          className="w-1/2"
+        />
+      </div>
+      <div className="flex items-center justify-between">
+        <label>Intensity</label>
+        <Slider
+          value={[light.intensity]}
+          onValueChange={([v]) => onLightChange(light.id, { intensity: v })}
+          min={0}
+          max={50}
+          step={0.1}
+          className="w-1/2"
+        />
+      </div>
+      <div className="flex items-center justify-between">
+        <label>Color Temp</label>
+        <Slider
+          value={[light.kelvin]}
+          onValueChange={([v]) => onLightChange(light.id, { kelvin: v })}
+          min={1000}
+          max={12000}
+          step={100}
+          className="w-1/2"
+        />
+      </div>
+      <div className="flex items-center justify-between">
+        <label>Cone Angle</label>
+        <Slider
+          value={[light.angle]}
+          onValueChange={([v]) => onLightChange(light.id, { angle: v })}
+          min={0}
+          max={90}
+          step={1}
+          className="w-1/2"
+        />
+      </div>
+      <div className="flex items-center justify-between">
+        <label>Penumbra</label>
+        <Slider
+          value={[light.penumbra]}
+          onValueChange={([v]) => onLightChange(light.id, { penumbra: v })}
+          min={0}
+          max={1}
+          step={0.01}
+          className="w-1/2"
+        />
+      </div>
+    </div>
+  )
+}
+
 function SettingsPanel({
   model,
   onUpdate,
   onDelete,
   onThumbnailUpload,
   lights,
-  onLightsChange,
+  onLightChange,
+  addLight,
+  removeLight,
+  cloneLight,
+  toggleLightVisibility,
   selectedLightId,
   onSelectLight,
+  lightsEnabled,
+  onLightsEnabledChange,
+  environmentEnabled,
+  onEnvironmentEnabledChange,
   bgType,
   onBgTypeChange,
   bgColor1,
@@ -1368,9 +1548,17 @@ function SettingsPanel({
   onDelete: () => void
   onThumbnailUpload: (file: File) => void
   lights: Light[]
-  onLightsChange: (lights: Light[]) => void
+  onLightChange: (id: number, newValues: Partial<Omit<Light, "id">>) => void
+  addLight: () => void
+  removeLight: (id: number) => void
+  cloneLight: (id: number) => void
+  toggleLightVisibility: (id: number) => void
   selectedLightId: number | null
   onSelectLight: (id: number | null) => void
+  lightsEnabled: boolean
+  onLightsEnabledChange: (enabled: boolean) => void
+  environmentEnabled: boolean
+  onEnvironmentEnabledChange: (enabled: boolean) => void
   bgType: "color" | "gradient" | "image"
   onBgTypeChange: (type: "color" | "gradient" | "image") => void
   bgColor1: string
@@ -1380,49 +1568,9 @@ function SettingsPanel({
   bgImage: string | null
   onBgImageChange: (value: string | null) => void
 }) {
-  const [name, setName] = useState(model.name)
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false)
   const thumbnailInputRef = useRef<HTMLInputElement>(null)
   const bgImageInputRef = useRef<HTMLInputElement>(null)
-
-  const { data: allFolders } = useSWR<Folder[]>("/api/folders/all", fetcher)
-
-  useEffect(() => {
-    setName(model.name)
-  }, [model.name])
-
-  const handleNameBlur = () => {
-    if (name !== model.name) onUpdate(model.id, { name })
-  }
-
-  const handleLightChange = (id: number, newValues: Partial<Omit<Light, "id">>) => {
-    onLightsChange(lights.map((light) => (light.id === id ? { ...light, ...newValues } : light)))
-  }
-
-  const addLight = () => {
-    if (lights.length < 3) {
-      const newLight: Light = {
-        id: Date.now(),
-        position: [-5, 5, -5],
-        targetPosition: [0, 0, 0],
-        intensity: 1,
-        kelvin: 5500,
-        decay: 1,
-        angle: 45,
-        penumbra: 0.5,
-      }
-      onLightsChange([...lights, newLight])
-    }
-  }
-
-  const removeLight = (id: number) => {
-    if (lights.length > 1) {
-      onLightsChange(lights.filter((light) => light.id !== id))
-      if (selectedLightId === id) {
-        onSelectLight(lights.find((l) => l.id !== id)?.id || null)
-      }
-    }
-  }
 
   const handleBgImageUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0]
@@ -1435,8 +1583,6 @@ function SettingsPanel({
     }
   }
 
-  const selectedLight = lights.find((l) => l.id === selectedLightId)
-
   return (
     <div className="px-4 pb-4 flex flex-col h-full text-white overflow-y-auto">
       <div className="space-y-4 flex-1 overflow-y-auto pr-2 -mr-2">
@@ -1445,7 +1591,7 @@ function SettingsPanel({
           <div className="flex items-center justify-between text-xs">
             <label>Name</label>
             <div className="w-1/2">
-              <EditableValue value={name} onSave={(newName) => onUpdate(model.id, { name: newName })} />
+              <EditableValue value={model.name} onSave={(newName) => onUpdate(model.id, { name: newName })} />
             </div>
           </div>
           <div className="flex items-center justify-between text-xs">
@@ -1486,198 +1632,145 @@ function SettingsPanel({
         </div>
         <Separator className="bg-white/20" />
         <div className="space-y-2">
-          <h3 className="text-sm font-semibold">Scene</h3>
-          <div className="flex items-center justify-between text-xs">
-            <label>Background</label>
-            <Select value={bgType} onValueChange={(v) => onBgTypeChange(v as any)}>
-              <SelectTrigger className="w-1/2 h-6 text-xs bg-white/10 border-white/30">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="color">Color</SelectItem>
-                <SelectItem value="gradient">Gradient</SelectItem>
-                <SelectItem value="image">Image</SelectItem>
-              </SelectContent>
-            </Select>
+          <div className="flex items-center justify-between">
+            <h3 className="text-sm font-semibold">Lights</h3>
+            <Switch checked={lightsEnabled} onCheckedChange={onLightsEnabledChange} />
           </div>
-          {bgType === "color" && (
-            <div className="flex items-center justify-between text-xs">
-              <label>Color</label>
-              <input
-                type="color"
-                value={bgColor1}
-                onChange={(e) => onBgColor1Change(e.target.value)}
-                className="w-6 h-6 p-0 bg-transparent border-none"
-              />
-            </div>
-          )}
-          {bgType === "gradient" && (
+          {lightsEnabled && (
             <>
-              <div className="flex items-center justify-between text-xs">
-                <label>Top Color</label>
-                <input
-                  type="color"
-                  value={bgColor1}
-                  onChange={(e) => onBgColor1Change(e.target.value)}
-                  className="w-6 h-6 p-0 bg-transparent border-none"
-                />
-              </div>
-              <div className="flex items-center justify-between text-xs">
-                <label>Bottom Color</label>
-                <input
-                  type="color"
-                  value={bgColor2}
-                  onChange={(e) => onBgColor2Change(e.target.value)}
-                  className="w-6 h-6 p-0 bg-transparent border-none"
-                />
+              <Accordion
+                type="single"
+                collapsible
+                className="w-full"
+                value={selectedLightId?.toString()}
+                onValueChange={(val) => onSelectLight(val ? Number(val) : null)}
+              >
+                {lights.map((light, index) => (
+                  <AccordionItem key={light.id} value={light.id.toString()} className="border-b-white/10">
+                    <div className="flex items-center w-full hover:bg-white/5 rounded-t-md">
+                      <AccordionTrigger className="flex-1 px-3 py-2 text-xs">Light {index + 1}</AccordionTrigger>
+                      <div className="flex items-center gap-1 pr-3">
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          className="h-6 w-6"
+                          onClick={(e) => {
+                            e.stopPropagation()
+                            toggleLightVisibility(light.id)
+                          }}
+                        >
+                          {light.visible ? <Eye className="h-4 w-4" /> : <EyeOff className="h-4 w-4" />}
+                        </Button>
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          className="h-6 w-6"
+                          onClick={(e) => {
+                            e.stopPropagation()
+                            cloneLight(light.id)
+                          }}
+                        >
+                          <Clone className="h-3 w-3" />
+                        </Button>
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          className="h-6 w-6 hover:text-destructive"
+                          onClick={(e) => {
+                            e.stopPropagation()
+                            removeLight(light.id)
+                          }}
+                        >
+                          <Trash2 className="h-3 w-3" />
+                        </Button>
+                      </div>
+                    </div>
+                    <AccordionContent>
+                      <LightSettings light={light} onLightChange={onLightChange} />
+                    </AccordionContent>
+                  </AccordionItem>
+                ))}
+              </Accordion>
+              <div className="flex justify-end pt-2">
+                <Button size="sm" className="text-xs h-6" onClick={addLight} disabled={lights.length >= 5}>
+                  <Plus className="w-3 h-3 mr-1" />
+                  Add Light
+                </Button>
               </div>
             </>
           )}
-          {bgType === "image" && (
-            <div className="flex items-center justify-between text-xs">
-              <label>Image</label>
-              <Button size="sm" className="text-xs h-6" onClick={() => bgImageInputRef.current?.click()}>
-                Upload
-              </Button>
-              <input
-                type="file"
-                ref={bgImageInputRef}
-                className="hidden"
-                accept="image/*"
-                onChange={handleBgImageUpload}
-              />
-            </div>
-          )}
         </div>
         <Separator className="bg-white/20" />
-        <Tabs
-          value={selectedLightId?.toString()}
-          onValueChange={(val) => onSelectLight(Number(val))}
-          className="w-full"
-        >
+        <div className="space-y-2">
           <div className="flex items-center justify-between">
-            <h3 className="text-sm font-semibold">Lights</h3>
-            <TabsList className="h-7">
-              {lights.map((light, i) => (
-                <TabsTrigger key={light.id} value={light.id.toString()} className="h-5 text-xs px-2">
-                  {i + 1}
-                </TabsTrigger>
-              ))}
-            </TabsList>
+            <h3 className="text-sm font-semibold">Environment</h3>
+            <Switch checked={environmentEnabled} onCheckedChange={onEnvironmentEnabledChange} />
           </div>
-          {lights.map((light) => (
-            <TabsContent key={light.id} value={light.id.toString()} className="space-y-3 text-xs mt-2">
-              <div className="flex items-center justify-between">
-                <label>Position (X, Y, Z)</label>
-                <div className="flex gap-1 w-1/2">
-                  <EditableValue
-                    value={light.position[0]}
-                    onSave={(v) =>
-                      handleLightChange(light.id, { position: [Number(v), light.position[1], light.position[2]] })
-                    }
-                  />
-                  <EditableValue
-                    value={light.position[1]}
-                    onSave={(v) =>
-                      handleLightChange(light.id, { position: [light.position[0], Number(v), light.position[2]] })
-                    }
-                  />
-                  <EditableValue
-                    value={light.position[2]}
-                    onSave={(v) =>
-                      handleLightChange(light.id, { position: [light.position[0], light.position[1], Number(v)] })
-                    }
+          {environmentEnabled && (
+            <div className="space-y-2">
+              <div className="flex items-center justify-between text-xs">
+                <label>Background</label>
+                <Select value={bgType} onValueChange={(v) => onBgTypeChange(v as any)}>
+                  <SelectTrigger className="w-1/2 h-6 text-xs bg-white/10 border-white/30">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="color">Color</SelectItem>
+                    <SelectItem value="gradient">Gradient</SelectItem>
+                    <SelectItem value="image">Image</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+              {bgType === "color" && (
+                <div className="flex items-center justify-between text-xs">
+                  <label>Color</label>
+                  <input
+                    type="color"
+                    value={bgColor1}
+                    onChange={(e) => onBgColor1Change(e.target.value)}
+                    className="w-6 h-6 p-0 bg-transparent border-none"
                   />
                 </div>
-              </div>
-              <div className="flex items-start justify-between">
-                <label className="pt-2">Target (X, Z)</label>
-                <DirectionalPad
-                  value={{ x: light.targetPosition[0], z: light.targetPosition[2] }}
-                  onChange={({ x, z }) =>
-                    handleLightChange(light.id, { targetPosition: [x, light.targetPosition[1], z] })
-                  }
-                />
-              </div>
-              <div className="flex items-center justify-between">
-                <label>Target Height (Y)</label>
-                <Slider
-                  value={[light.targetPosition[1]]}
-                  onValueChange={([v]) =>
-                    handleLightChange(light.id, {
-                      targetPosition: [light.targetPosition[0], v, light.targetPosition[2]],
-                    })
-                  }
-                  min={-10}
-                  max={10}
-                  step={0.1}
-                  className="w-1/2"
-                />
-              </div>
-              <div className="flex items-center justify-between">
-                <label>Intensity</label>
-                <Slider
-                  value={[light.intensity]}
-                  onValueChange={([v]) => handleLightChange(light.id, { intensity: v })}
-                  min={0}
-                  max={50}
-                  step={0.1}
-                  className="w-1/2"
-                />
-              </div>
-              <div className="flex items-center justify-between">
-                <label>Color Temp</label>
-                <Slider
-                  value={[light.kelvin]}
-                  onValueChange={([v]) => handleLightChange(light.id, { kelvin: v })}
-                  min={1000}
-                  max={12000}
-                  step={100}
-                  className="w-1/2"
-                />
-              </div>
-              <div className="flex items-center justify-between">
-                <label>Cone Angle</label>
-                <Slider
-                  value={[light.angle]}
-                  onValueChange={([v]) => handleLightChange(light.id, { angle: v })}
-                  min={0}
-                  max={90}
-                  step={1}
-                  className="w-1/2"
-                />
-              </div>
-              <div className="flex items-center justify-between">
-                <label>Penumbra</label>
-                <Slider
-                  value={[light.penumbra]}
-                  onValueChange={([v]) => handleLightChange(light.id, { penumbra: v })}
-                  min={0}
-                  max={1}
-                  step={0.01}
-                  className="w-1/2"
-                />
-              </div>
-              <div className="flex justify-end">
-                <Button
-                  variant="destructive"
-                  size="sm"
-                  className="text-xs h-6"
-                  onClick={() => removeLight(light.id)}
-                  disabled={lights.length <= 1}
-                >
-                  <Minus className="w-3 h-3 mr-1" />
-                  Remove Light
-                </Button>
-              </div>
-            </TabsContent>
-          ))}
-        </Tabs>
-        <div className="flex justify-end">
-          <Button size="sm" className="text-xs h-6" onClick={addLight} disabled={lights.length >= 3}>
-            <Plus className="w-3 h-3 mr-1" />
-            Add Light
-          </Button>
+              )}
+              {bgType === "gradient" && (
+                <>
+                  <div className="flex items-center justify-between text-xs">
+                    <label>Top Color</label>
+                    <input
+                      type="color"
+                      value={bgColor1}
+                      onChange={(e) => onBgColor1Change(e.target.value)}
+                      className="w-6 h-6 p-0 bg-transparent border-none"
+                    />
+                  </div>
+                  <div className="flex items-center justify-between text-xs">
+                    <label>Bottom Color</label>
+                    <input
+                      type="color"
+                      value={bgColor2}
+                      onChange={(e) => onBgColor2Change(e.target.value)}
+                      className="w-6 h-6 p-0 bg-transparent border-none"
+                    />
+                  </div>
+                </>
+              )}
+              {bgType === "image" && (
+                <div className="flex items-center justify-between text-xs">
+                  <label>Image</label>
+                  <Button size="sm" className="text-xs h-6" onClick={() => bgImageInputRef.current?.click()}>
+                    Upload
+                  </Button>
+                  <input
+                    type="file"
+                    ref={bgImageInputRef}
+                    className="hidden"
+                    accept="image/*"
+                    onChange={handleBgImageUpload}
+                  />
+                </div>
+              )}
+            </div>
+          )}
         </div>
       </div>
     </div>
