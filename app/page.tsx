@@ -20,7 +20,7 @@ import type React from "react"
 import { useState, useRef, useEffect, Suspense, useCallback, Fragment } from "react"
 import { useRouter, useSearchParams } from "next/navigation"
 import { Canvas, useFrame } from "@react-three/fiber"
-import { useGLTF, OrbitControls, Html, useProgress, SpotLight, SpotLightHelper } from "@react-three/drei"
+import { useGLTF, OrbitControls, Html, useProgress, SpotLight } from "@react-three/drei"
 import {
   Upload,
   FolderIcon,
@@ -180,22 +180,36 @@ function SpotLightInScene({
 }) {
   const spotLightRef = useRef<THREE.SpotLight>(null!)
   const target = useRef(new THREE.Object3D())
-  const helperRef = useRef<THREE.SpotLightHelper>()
+  const spotLightHelper = useRef<THREE.SpotLightHelper>()
 
   useFrame(() => {
     target.current.position.set(...light.targetPosition)
-    if (helperRef.current) {
-      helperRef.current.update()
+    if (spotLightHelper.current) {
+      spotLightHelper.current.update()
     }
   })
-
-  if (!light.visible) return null
 
   const lightColor = new THREE.Color(
     kelvinToRgb(light.kelvin).r,
     kelvinToRgb(light.kelvin).g,
     kelvinToRgb(light.kelvin).b,
   )
+
+  useEffect(() => {
+    if (isSelected && spotLightRef.current) {
+      spotLightHelper.current = new THREE.SpotLightHelper(spotLightRef.current, lightColor.getHex())
+      spotLightHelper.current.update()
+    } else {
+      spotLightHelper.current?.dispose()
+      spotLightHelper.current = undefined
+    }
+    return () => {
+      spotLightHelper.current?.dispose()
+      spotLightHelper.current = undefined
+    }
+  }, [isSelected, lightColor])
+
+  if (!light.visible) return null
 
   return (
     <>
@@ -211,7 +225,7 @@ function SpotLightInScene({
         castShadow
       />
       <primitive object={target.current} />
-      {isSelected && <SpotLightHelper light={spotLightRef.current} ref={helperRef} color={lightColor} />}
+      {isSelected && spotLightHelper.current && <primitive object={spotLightHelper.current.light} />}
       <mesh position={light.position} onClick={onSelect} onPointerOver={(e) => e.stopPropagation()}>
         <sphereGeometry args={[0.2, 16, 16]} />
         <meshBasicMaterial color={isSelected ? "yellow" : lightColor} wireframe />
