@@ -1,29 +1,21 @@
 import type React from "react"
-import type { Metadata } from "next"
 import { Inter } from "next/font/google"
-import "./globals.css"
-import { ThemeProvider } from "@/components/theme-provider"
 
-const inter = Inter({ subsets: ["latin"] })
+// If you don't have this font, you can install it with `npm install next/font`
+// or change it to a default one.
+const inter = Inter({ subsets: ["latin"], display: "swap" })
 
-export const metadata: Metadata = {
-  title: "3D Model Gallery",
-  description: "A beautiful gallery for viewing 3D models",
-    generator: 'v0.dev'
-}
-
-export default function RootLayout({
+export default function ViewLayout({
   children,
 }: Readonly<{
   children: React.ReactNode
 }>) {
-  return (
-    <html lang="en" suppressHydrationWarning>
-      <body className={`${inter.className} bg-black`}>
-        <ThemeProvider attribute="class" defaultTheme="dark" enableSystem disableTransitionOnChange>
-          {children}
-        </ThemeProvider>
-      </body>
-    </html>
-  )
+  return <div className={`${inter.className} bg-black`}>{children}</div>
 }
+
+
+import './globals.css'
+
+export const metadata = {
+      generator: 'v0.dev'
+    };
