@@ -303,13 +303,31 @@ function GalleryPage() {
   const modelRef = useRef<THREE.Group>(null)
 
   const resetViewSettings = useCallback((settings: ViewSettings | null | undefined) => {
-    const preset = lightingPresets[0]
-    const defaultLights =
-      preset?.lights.map((p, i) => ({
-        ...p,
-        id: Date.now() + i,
+    // Create better default lights that are close enough to illuminate models
+    const defaultLights = [
+      {
+        id: Date.now(),
         visible: true,
-      })) ?? []
+        position: [-2, 3, 2] as [number, number, number],
+        targetPosition: [0, 0, 0] as [number, number, number],
+        intensity: 3,
+        kelvin: 5500,
+        decay: 1,
+        angle: 45,
+        penumbra: 0.5,
+      },
+      {
+        id: Date.now() + 1,
+        visible: true,
+        position: [2, 2, -1] as [number, number, number],
+        targetPosition: [0, 0, 0] as [number, number, number],
+        intensity: 2,
+        kelvin: 4000,
+        decay: 1,
+        angle: 60,
+        penumbra: 0.3,
+      },
+    ]
 
     if (settings && settings.lights) {
       const newLights = settings.lights.map((l, i) => ({
@@ -658,7 +676,17 @@ function GalleryPage() {
   const cycleLightPreset = useCallback(() => {
     const nextPresetIndex = (currentPresetIndex + 1) % lightingPresets.length
     const preset = lightingPresets[nextPresetIndex]
-    setLights(preset.lights.map((p, i) => ({ ...p, id: Date.now() + i, visible: true })))
+
+    // Scale down the preset light positions to be closer to models
+    const scaledLights = preset.lights.map((p, i) => ({
+      ...p,
+      id: Date.now() + i,
+      visible: true,
+      position: [p.position[0] * 0.4, p.position[1] * 0.6, p.position[2] * 0.4] as [number, number, number], // Scale positions closer
+      intensity: Math.max(p.intensity * 1.5, 1), // Increase intensity
+    }))
+
+    setLights(scaledLights)
     setCurrentPresetIndex(nextPresetIndex)
     toast.success(`Lighting preset: ${preset.name}`)
   }, [currentPresetIndex])
@@ -688,9 +716,9 @@ function GalleryPage() {
     const newLight: Light = {
       id: Date.now(),
       visible: true,
-      position: [-1, 1, -1],
+      position: [-2, 3, 2], // Much closer to the model
       targetPosition: [0, 0, 0],
-      intensity: 1,
+      intensity: 3, // Increased intensity
       kelvin: 5500,
       decay: 1,
       angle: 45,
