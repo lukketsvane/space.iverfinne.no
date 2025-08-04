@@ -318,7 +318,7 @@ function GalleryPage() {
   const [editingFolder, setEditingFolder] = useState<Folder | null>(null)
 
   // Viewer settings state
-  const [materialMode, setMaterialMode] = useState<"pbr" | "normal" | "white">("white") // Changed from "pbr" to "white"
+  const [materialMode, setMaterialMode] = useState<"pbr" | "normal" | "white">("pbr")
   const [isDragging, setIsDragging] = useState(false)
   const [isSettingsPanelOpen, setIsSettingsPanelOpen] = useState(true)
   const [lightsEnabled, setLightsEnabled] = useState(true)
