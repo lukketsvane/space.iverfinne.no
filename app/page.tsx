@@ -1,6 +1,17 @@
 "use client"
 
 import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+  AlertDialogTrigger,
+} from "@/components/ui/alert-dialog"
+import {
   ContextMenu,
   ContextMenuContent,
   ContextMenuItem,
@@ -32,6 +43,7 @@ import {
 import { useRouter, useSearchParams } from "next/navigation"
 import { Canvas, useFrame, useThree } from "@react-three/fiber"
 import { useGLTF, OrbitControls, Html, useProgress, SpotLight, useHelper, Plane, Bounds } from "@react-three/drei"
+import { EffectComposer, Bloom } from "@react-three/postprocessing"
 import {
   Upload,
   FolderIcon,
@@ -60,6 +72,7 @@ import {
   RotateCcw,
   X,
   Crosshair,
+  Camera,
 } from "lucide-react"
 import { upload } from "@vercel/blob/client"
 import useSWR, { useSWRConfig } from "swr"
@@ -436,6 +449,7 @@ function GalleryPage() {
   const [isSettingsPanelOpen, setIsSettingsPanelOpen] = useState(true)
   const [lightsEnabled, setLightsEnabled] = useState(true)
   const [environmentEnabled, setEnvironmentEnabled] = useState(true)
+  const [bloomEnabled, setBloomEnabled] = useState(true)
   const [bgType, setBgType] = useState<"color" | "gradient" | "image">("color")
   const [bgColor1, setBgColor1] = useState("#000000")
   const [bgColor2, setBgColor2] = useState("#1a1a1a")
@@ -443,6 +457,7 @@ function GalleryPage() {
   const [lights, setLights] = useState<Light[]>([])
   const [selectedLightId, setSelectedLightId] = useState<number | null>(null)
   const [currentPresetIndex, setCurrentPresetIndex] = useState(-1)
+  const [fieldOfView, setFieldOfView] = useState(50)
 
   const [panelPosition, setPanelPosition] = useState({ x: 0, y: 0 })
   const [isDraggingPanel, setIsDraggingPanel] = useState(false)
@@ -494,7 +509,7 @@ function GalleryPage() {
         setBgType(settings.bgType)
         setBgColor1(settings.bgColor1)
         setBgColor2(settings.bgColor2)
-        setSelectedLightId(newLights[0]?.id ?? null)
+        setBloomEnabled(settings.bloomEnabled)
       } else {
         setLights(defaultLights)
         setLightsEnabled(true)
@@ -502,8 +517,9 @@ function GalleryPage() {
         setBgType("color")
         setBgColor1("#000000")
         setBgColor2("#1a1a1a")
-        setSelectedLightId(defaultLights[0]?.id ?? null)
+        setBloomEnabled(false)
       }
+      setSelectedLightId(null) // No light selected by default
       setCurrentPresetIndex(0)
     },
     [
@@ -527,6 +543,12 @@ function GalleryPage() {
     // If it does not have saved settings, we do nothing,
     // which preserves the current lighting and environment from the previous model.
   }, [selectedModel, resetViewSettings])
+
+  const hasCaptured = useRef(false)
+  useEffect(() => {
+    // Reset capture flag when model changes
+    hasCaptured.current = false
+  }, [modelId])
 
   // --- Navigation and Actions ---
   const updateQuery = (newParams: Record<string, string | null>) => {
@@ -585,17 +607,23 @@ function GalleryPage() {
 
   const handleUploadAction = async (files: FileList | null) => {
     if (!files || files.length === 0) return
-    setUploadingFiles(Array.from(files).map((file) => ({ name: file.name, progress: 0 })))
+    const fileArray = Array.from(files)
+    setUploadingFiles(fileArray.map((file) => ({ name: file.name, progress: 0 })))
+
+    const uploadedModels: Model[] = []
 
     await Promise.all(
-      Array.from(files).map(async (file) => {
-        if (!file.name.endsWith(".glb")) return toast.error(`Skipping non-GLB file: ${file.name}`)
+      fileArray.map(async (file) => {
+        if (!file.name.endsWith(".glb")) {
+          toast.error(`Skipping non-GLB file: ${file.name}`)
+          return
+        }
         try {
           const newBlob = await upload(file.name.replace(/\s+/g, "_"), file, {
             access: "public",
             handleUploadUrl: "/api/upload",
           })
-          await fetch("/api/models", {
+          const res = await fetch("/api/models", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({
@@ -607,6 +635,9 @@ function GalleryPage() {
               folder_id: currentFolderId,
             }),
           })
+          if (!res.ok) throw new Error("Failed to create model record")
+          const newModel = await res.json()
+          uploadedModels.push(newModel)
           toast.success(`Uploaded ${file.name}`)
         } catch (error) {
           toast.error(`Failed to upload ${file.name}`)
@@ -615,6 +646,10 @@ function GalleryPage() {
     )
     mutate(galleryUrl)
     setUploadingFiles([])
+
+    if (uploadedModels.length === 1) {
+      updateQuery({ modelId: uploadedModels[0].id })
+    }
   }
 
   const handleCreateFolder = async (name: string) => {
@@ -706,11 +741,56 @@ function GalleryPage() {
     mutate(galleryUrl)
   }
 
+  const handleThumbnailUpload = useCallback(
+    async (file: File) => {
+      if (!selectedModel) return
+      toast.info(`Uploading thumbnail...`)
+      const pathname = `thumbnails/${selectedModel.id}.${file.name.split(".").pop()}`
+      const newBlob = await upload(pathname, file, {
+        access: "public",
+        handleUploadUrl: "/api/upload",
+        clientPayload: JSON.stringify({ isThumbnail: true }),
+      })
+      await handleModelUpdate(selectedModel.id, { thumbnail_url: newBlob.url })
+    },
+    [selectedModel, handleModelUpdate],
+  )
+
+  const handleCaptureThumbnail = useCallback(async () => {
+    if (captureControllerRef.current) {
+      toast.info("Capturing thumbnail...")
+      const file = await captureControllerRef.current.capture()
+      if (file) {
+        await handleThumbnailUpload(file)
+      }
+    }
+  }, [handleThumbnailUpload])
+
+  const handleDeleteThumbnail = async () => {
+    if (!selectedModel) return
+    await handleModelUpdate(selectedModel.id, {
+      thumbnail_url: `/placeholder.svg?width=400&height=400&query=${encodeURIComponent(selectedModel.name)}`,
+    })
+    toast.success("Thumbnail deleted.")
+  }
+
+  useEffect(() => {
+    if (selectedModel && selectedModel.thumbnail_url.includes("/placeholder.svg") && !hasCaptured.current) {
+      const timer = setTimeout(() => {
+        if (captureControllerRef.current) {
+          handleCaptureThumbnail()
+          hasCaptured.current = true // Prevent re-capturing
+        }
+      }, 2500) // A bit longer to be safe
+      return () => clearTimeout(timer)
+    }
+  }, [selectedModel, handleCaptureThumbnail])
+
   const handleSaveViewSettings = async () => {
     if (!selectedModel) return
     const settingsToSave: ViewSettings = {
       lights: lights.map(({ id, visible, ...rest }) => rest),
-      lightsEnabled,
+      lightsEnabled: true,
       environmentEnabled,
       bgType,
       bgColor1,
@@ -720,16 +800,23 @@ function GalleryPage() {
     toast.success("Default view saved!")
   }
 
-  const handleThumbnailUpload = async (file: File) => {
+  const handleDeleteViewSettings = async () => {
     if (!selectedModel) return
-    toast.info(`Uploading thumbnail...`)
-    const pathname = `thumbnails/${selectedModel.id}.${file.name.split(".").pop()}`
-    const newBlob = await upload(pathname, file, {
-      access: "public",
-      handleUploadUrl: "/api/upload",
-      clientPayload: JSON.stringify({ isThumbnail: true }),
+    await handleModelUpdate(selectedModel.id, { view_settings: null })
+    resetViewSettings(null) // Reset to app default
+    toast.success("Saved view has been deleted.")
+  }
+
+  const handleSaveFolderDescription = async (description: string) => {
+    if (!editingFolder) return
+    await fetch(`/api/folders/${editingFolder.id}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ description }),
     })
-    await handleModelUpdate(selectedModel.id, { thumbnail_url: newBlob.url })
+    toast.success("Folder description saved.")
+    mutate(galleryUrl)
+    setEditingFolder(null)
   }
 
   const handleBulkDownload = () => {
@@ -751,18 +838,6 @@ function GalleryPage() {
       link.click()
       document.body.removeChild(link)
     })
-  }
-
-  const handleSaveFolderDescription = async (description: string) => {
-    if (!editingFolder) return
-    await fetch(`/api/folders/${editingFolder.id}`, {
-      method: "PATCH",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ description }),
-    })
-    toast.success("Folder description saved.")
-    mutate(galleryUrl)
-    setEditingFolder(null)
   }
 
   const handleViewerKeyDown = useCallback(
@@ -942,16 +1017,6 @@ function GalleryPage() {
     toast.success("Light focused on model center.")
   }
 
-  const handleCaptureThumbnail = async () => {
-    if (captureControllerRef.current) {
-      toast.info("Capturing thumbnail...")
-      const file = await captureControllerRef.current.capture()
-      if (file) {
-        await handleThumbnailUpload(file)
-      }
-    }
-  }
-
   // --- Render Logic ---
   if (modelId) {
     if (!selectedModel) {
@@ -967,22 +1032,25 @@ function GalleryPage() {
         <Canvas
           shadows
           gl={{ preserveDrawingBuffer: true, alpha: true }} // Enable transparency and buffer preservation
-          camera={{ fov: 50 }}
+          camera={{ fov: fieldOfView }}
           onPointerMissed={(e) => e.button === 0 && setSelectedLightId(null)}
         >
           <Suspense fallback={<Loader />}>
-            {lightsEnabled &&
-              lights.map((light) => (
-                <SpotLightInScene
-                  key={light.id}
-                  light={light}
-                  isSelected={light.id === selectedLightId}
-                  onSelect={() => setSelectedLightId(light.id)}
-                />
-              ))}
-            <Bounds fit clip damping={6} margin={1.2}>
-              <ModelViewer ref={modelRef} modelUrl={selectedModel.model_url} materialMode={materialMode} />
-            </Bounds>
+            <EffectComposer disableNormalPass>
+              {lightsEnabled &&
+                lights.map((light) => (
+                  <SpotLightInScene
+                    key={light.id}
+                    light={light}
+                    isSelected={light.id === selectedLightId}
+                    onSelect={() => setSelectedLightId(light.id)}
+                  />
+                ))}
+              <Bounds fit clip damping={6} margin={1.2}>
+                <ModelViewer ref={modelRef} modelUrl={selectedModel.model_url} materialMode={materialMode} />
+              </Bounds>
+              {bloomEnabled && <Bloom mipmapBlur intensity={0.5} luminanceThreshold={1} />}
+            </EffectComposer>
             <CaptureController ref={captureControllerRef} modelRef={modelRef} />
           </Suspense>
           <OrbitControls enabled={isOrbitControlsEnabled} makeDefault />
@@ -1026,6 +1094,7 @@ function GalleryPage() {
               onDelete={() => handleBulkDelete()}
               onThumbnailUpload={handleThumbnailUpload}
               onCaptureThumbnail={handleCaptureThumbnail}
+              onDeleteThumbnail={handleDeleteThumbnail}
               lights={lights}
               onLightChange={handleLightChange}
               addLight={addLight}
@@ -1039,6 +1108,8 @@ function GalleryPage() {
               onLightsEnabledChange={setLightsEnabled}
               environmentEnabled={environmentEnabled}
               onEnvironmentEnabledChange={setEnvironmentEnabled}
+              bloomEnabled={bloomEnabled}
+              onBloomEnabledChange={setBloomEnabled}
               bgType={bgType}
               onBgTypeChange={setBgType}
               bgColor1={bgColor1}
@@ -1047,7 +1118,10 @@ function GalleryPage() {
               onBgColor2Change={setBgColor2}
               bgImage={bgImage}
               onBgImageChange={setBgImage}
+              fieldOfView={fieldOfView}
+              onFieldOfViewChange={setFieldOfView}
               onSaveView={handleSaveViewSettings}
+              onDeleteView={handleDeleteViewSettings}
               onResetView={() => resetViewSettings(selectedModel.view_settings)}
             />
           )}
@@ -1206,7 +1280,6 @@ function GalleryPage() {
           </header>
           <main
             className="relative flex-1 p-4 md:p-8 overflow-y-auto"
-            onClick={() => setSelectedItems(new Set())}
             onDragEnter={(e) => {
               e.preventDefault()
               setIsDragging(true)
@@ -1919,6 +1992,7 @@ function SettingsPanel({
   onDelete,
   onThumbnailUpload,
   onCaptureThumbnail,
+  onDeleteThumbnail,
   lights,
   onLightChange,
   addLight,
@@ -1932,6 +2006,8 @@ function SettingsPanel({
   onLightsEnabledChange,
   environmentEnabled,
   onEnvironmentEnabledChange,
+  bloomEnabled,
+  onBloomEnabledChange,
   bgType,
   onBgTypeChange,
   bgColor1,
@@ -1940,7 +2016,10 @@ function SettingsPanel({
   onBgColor2Change,
   bgImage,
   onBgImageChange,
+  fieldOfView,
+  onFieldOfViewChange,
   onSaveView,
+  onDeleteView,
   onResetView,
 }: {
   model: Model
@@ -1948,6 +2027,7 @@ function SettingsPanel({
   onDelete: () => void
   onThumbnailUpload: (file: File) => void
   onCaptureThumbnail: () => void
+  onDeleteThumbnail: () => void
   lights: Light[]
   onLightChange: (id: number, newValues: Partial<Omit<Light, "id">>) => void
   addLight: () => void
@@ -1961,6 +2041,8 @@ function SettingsPanel({
   onLightsEnabledChange: (enabled: boolean) => void
   environmentEnabled: boolean
   onEnvironmentEnabledChange: (enabled: boolean) => void
+  bloomEnabled: boolean
+  onBloomEnabledChange: (enabled: boolean) => void
   bgType: "color" | "gradient" | "image"
   onBgTypeChange: (type: "color" | "gradient" | "image") => void
   bgColor1: string
@@ -1969,7 +2051,10 @@ function SettingsPanel({
   onBgColor2Change: (value: string) => void
   bgImage: string | null
   onBgImageChange: (value: string | null) => void
+  fieldOfView: number
+  onFieldOfViewChange: (value: number) => void
   onSaveView: () => void
+  onDeleteView: () => void
   onResetView: () => void
 }) {
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false)
@@ -2012,9 +2097,34 @@ function SettingsPanel({
           </div>
           <div className="flex items-center justify-between text-xs">
             <label>Thumbnail</label>
-            <div className="flex items-center gap-2">
+            <div className="flex items-center gap-1">
+              <AlertDialog>
+                <AlertDialogTrigger asChild>
+                  <Button
+                    variant="destructive"
+                    size="icon"
+                    className="h-6 w-6"
+                    disabled={model.thumbnail_url.includes("/placeholder.svg")}
+                  >
+                    <Trash2 className="h-3 w-3" />
+                  </Button>
+                </AlertDialogTrigger>
+                <AlertDialogContent>
+                  <AlertDialogHeader>
+                    <AlertDialogTitle>Delete Thumbnail?</AlertDialogTitle>
+                    <AlertDialogDescription>
+                      This will revert the thumbnail to the default placeholder.
+                    </AlertDialogDescription>
+                  </AlertDialogHeader>
+                  <AlertDialogFooter>
+                    <AlertDialogCancel>Cancel</AlertDialogCancel>
+                    <AlertDialogAction onClick={onDeleteThumbnail}>Delete</AlertDialogAction>
+                  </AlertDialogFooter>
+                </AlertDialogContent>
+              </AlertDialog>
               <Button size="sm" className="text-xs h-6" onClick={onCaptureThumbnail}>
-                Capture View
+                <Camera className="h-3 w-3 mr-1" />
+                Capture
               </Button>
               <Button size="sm" className="text-xs h-6" onClick={() => thumbnailInputRef.current?.click()}>
                 Upload
@@ -2056,6 +2166,25 @@ function SettingsPanel({
           <div className="flex items-center justify-between">
             <h3 className="text-sm font-semibold">View Settings</h3>
             <div className="flex items-center gap-2">
+              <AlertDialog>
+                <AlertDialogTrigger asChild>
+                  <Button variant="destructive" size="icon" className="h-6 w-6" disabled={!model.view_settings}>
+                    <Trash2 className="h-3 w-3" />
+                  </Button>
+                </AlertDialogTrigger>
+                <AlertDialogContent>
+                  <AlertDialogHeader>
+                    <AlertDialogTitle>Delete Saved View?</AlertDialogTitle>
+                    <AlertDialogDescription>
+                      This action cannot be undone. The model will revert to the default scene view.
+                    </AlertDialogDescription>
+                  </AlertDialogHeader>
+                  <AlertDialogFooter>
+                    <AlertDialogCancel>Cancel</AlertDialogCancel>
+                    <AlertDialogAction onClick={onDeleteView}>Delete</AlertDialogAction>
+                  </AlertDialogFooter>
+                </AlertDialogContent>
+              </AlertDialog>
               <Button variant="ghost" size="icon" className="h-6 w-6" onClick={onResetView}>
                 <RotateCcw className="h-4 w-4" />
               </Button>
@@ -2065,7 +2194,22 @@ function SettingsPanel({
               </Button>
             </div>
           </div>
+          <div className="flex items-center justify-between text-xs">
+            <label>Field of View</label>
+            <div className="flex items-center gap-2 w-1/2">
+              <Slider
+                value={[fieldOfView]}
+                onValueChange={([v]) => onFieldOfViewChange(v)}
+                min={10}
+                max={120}
+                step={1}
+                className="w-3/4"
+              />
+              <EditableValue value={fieldOfView} onSave={(v) => onFieldOfViewChange(Number(v))} className="w-1/4" />
+            </div>
+          </div>
         </div>
+        <Separator className="bg-white/20" />
         <div className="space-y-2">
           <div className="flex items-center justify-between">
             <h3 className="text-sm font-semibold">Lights</h3>
@@ -2144,8 +2288,12 @@ function SettingsPanel({
           {environmentEnabled && (
             <div className="space-y-2">
               <div className="flex items-center justify-between text-xs">
+                <label>Bloom</label>
+                <Switch checked={bloomEnabled} onCheckedChange={onBloomEnabledChange} />
+              </div>
+              <div className="flex items-center justify-between text-xs">
                 <label>Background</label>
-                <Select value={bgType} onValueChange={(v) => onBgTypeChange(v as any)}>
+                <Select value={bgType} onValueChange={onBgTypeChange}>
                   <SelectTrigger className="w-1/2 h-6 text-xs bg-white/10 border-white/30">
                     <SelectValue />
                   </SelectTrigger>
