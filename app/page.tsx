@@ -145,7 +145,7 @@ export default function ViewPage() {
   return (
     <div className="bg-black min-h-screen text-gray-300 font-sans">
       <header className="p-4 sm:p-6 sticky top-0 bg-black/80 backdrop-blur-sm z-10 border-b border-gray-800 flex justify-between items-center">
-        <h1 className="text-xl font-medium text-white">Model Gallery</h1>
+        <h1 className="text-xl font-medium text-white">Form Helvette</h1>
         <ToggleGroup
           type="single"
           value={viewMode}
