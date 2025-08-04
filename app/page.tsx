@@ -76,9 +76,10 @@ import {
 } from "lucide-react"
 import { upload } from "@vercel/blob/client"
 import useSWR, { useSWRConfig } from "swr"
-import { Toaster, toast } from "sonner"
+import { toast } from "sonner"
 import * as THREE from "three"
 import { useGesture } from "@use-gesture/react"
+import dynamic from "next/dynamic"
 
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -119,6 +120,8 @@ import { Separator } from "@/components/ui/separator"
 import { kelvinToRgb, cn } from "@/lib/utils"
 import { lightingPresets } from "@/lib/lighting-presets"
 import type { Model, Folder, Light, ViewSettings, GalleryContents, GalleryItem } from "@/types"
+
+const Toaster = dynamic(() => import("sonner").then((mod) => mod.Toaster), { ssr: false })
 
 // --- Data Fetching ---
 const fetcher = (url: string) => fetch(url).then((res) => res.json())
@@ -444,7 +447,7 @@ function GalleryPage() {
   const [editingFolder, setEditingFolder] = useState<Folder | null>(null)
 
   // Viewer settings state
-  const [materialMode, setMaterialMode] = useState<"pbr" | "normal" | "white">("pbr")
+  const [materialMode, setMaterialMode] = useState<"pbr" | "normal" | "white">("white")
   const [isDragging, setIsDragging] = useState(false)
   const [isSettingsPanelOpen, setIsSettingsPanelOpen] = useState(true)
   const [lightsEnabled, setLightsEnabled] = useState(true)
@@ -469,88 +472,123 @@ function GalleryPage() {
   const modelRef = useRef<THREE.Group>(null)
   const captureControllerRef = useRef<{ capture: () => Promise<File | null> }>(null)
 
-  const resetViewSettings = useCallback(
-    (settings: ViewSettings | null | undefined) => {
-      // Create better default lights that are close enough to illuminate models
-      const defaultLights = [
-        {
-          id: Date.now(),
-          visible: true,
-          position: [-2, 3, 2] as [number, number, number],
-          targetPosition: [0, 0, 0] as [number, number, number],
-          intensity: 3,
-          kelvin: 5500,
-          decay: 1,
-          angle: 45,
-          penumbra: 0.5,
-        },
-        {
-          id: Date.now() + 1,
-          visible: true,
-          position: [2, 2, -1] as [number, number, number],
-          targetPosition: [0, 0, 0] as [number, number, number],
-          intensity: 2,
-          kelvin: 4000,
-          decay: 1,
-          angle: 60,
-          penumbra: 0.3,
-        },
-      ]
+  const resetViewSettings = useCallback((settings: ViewSettings | null | undefined) => {
+    const defaultLights = [
+      {
+        id: Date.now(),
+        visible: true,
+        position: [-2, 3, 2] as [number, number, number],
+        targetPosition: [0, 0, 0] as [number, number, number],
+        intensity: 3,
+        kelvin: 5500,
+        decay: 1,
+        angle: 45,
+        penumbra: 0.5,
+      },
+      {
+        id: Date.now() + 1,
+        visible: true,
+        position: [2, 2, -1] as [number, number, number],
+        targetPosition: [0, 0, 0] as [number, number, number],
+        intensity: 2,
+        kelvin: 4000,
+        decay: 1,
+        angle: 60,
+        penumbra: 0.3,
+      },
+    ]
 
-      if (settings && settings.lights) {
+    if (settings) {
+      if (settings.lights) {
         const newLights = settings.lights.map((l, i) => ({
           ...l,
           id: Date.now() + i,
-          visible: true, // Lights from settings are visible by default
+          visible: true,
         }))
         setLights(newLights)
-        setLightsEnabled(settings.lightsEnabled)
-        setEnvironmentEnabled(settings.environmentEnabled)
-        setBgType(settings.bgType)
-        setBgColor1(settings.bgColor1)
-        setBgColor2(settings.bgColor2)
-        setBloomEnabled(settings.bloomEnabled)
       } else {
         setLights(defaultLights)
-        setLightsEnabled(true)
-        setEnvironmentEnabled(true)
-        setBgType("color")
-        setBgColor1("#000000")
-        setBgColor2("#1a1a1a")
-        setBloomEnabled(false)
       }
-      setSelectedLightId(null) // No light selected by default
-      setCurrentPresetIndex(0)
-    },
-    [
-      setLights,
-      setLightsEnabled,
-      setEnvironmentEnabled,
-      setBgType,
-      setBgColor1,
-      setBgColor2,
-      setSelectedLightId,
-      setCurrentPresetIndex,
-    ],
-  )
+
+      setLightsEnabled(settings.lightsEnabled ?? true)
+      setEnvironmentEnabled(settings.environmentEnabled ?? true)
+      setBloomEnabled(settings.bloomEnabled ?? true)
+      setBgType(settings.bgType ?? "color")
+      setBgColor1(settings.bgColor1 ?? "#000000")
+      setBgColor2(settings.bgColor2 ?? "#1a1a1a")
+      setFieldOfView(settings.fieldOfView ?? 50)
+    } else {
+      setLights(defaultLights)
+      setLightsEnabled(true)
+      setEnvironmentEnabled(true)
+      setBloomEnabled(true)
+      setBgType("color")
+      setBgColor1("#000000")
+      setBgColor2("#1a1a1a")
+      setFieldOfView(50)
+    }
+    setSelectedLightId(null)
+    setCurrentPresetIndex(-1)
+  }, [])
 
   useEffect(() => {
-    // When a new model is selected, check if it has its own saved view settings.
     if (selectedModel?.view_settings) {
-      // If it does, apply them.
       resetViewSettings(selectedModel.view_settings)
     }
-    // If it does not have saved settings, we do nothing,
-    // which preserves the current lighting and environment from the previous model.
   }, [selectedModel, resetViewSettings])
 
   const hasCaptured = useRef(false)
   useEffect(() => {
-    // Reset capture flag when model changes
     hasCaptured.current = false
   }, [modelId])
 
-  // --- Navigation and Actions ---
+  const handleModelUpdate = async (id: string, updates: Partial<Omit<Model, "id" | "created_at">>) => {
+    await fetch(`/api/models/${id}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(updates),
+    })
+    mutateSelectedModel()
+    mutate(galleryUrl)
+  }
+
+  const handleThumbnailUpload = useCallback(
+    async (file: File) => {
+      if (!selectedModel) return
+      toast.info(`Uploading thumbnail...`)
+      const pathname = `thumbnails/${selectedModel.id}.${file.name.split(".").pop()}`
+      const newBlob = await upload(pathname, file, {
+        access: "public",
+        handleUploadUrl: "/api/upload",
+        clientPayload: JSON.stringify({ isThumbnail: true }),
+      })
+      await handleModelUpdate(selectedModel.id, { thumbnail_url: newBlob.url })
+    },
+    [selectedModel, mutateSelectedModel, mutate, galleryUrl],
+  )
+
+  const handleCaptureThumbnail = useCallback(async () => {
+    if (captureControllerRef.current) {
+      toast.info("Capturing thumbnail...")
+      const file = await captureControllerRef.current.capture()
+      if (file) {
+        await handleThumbnailUpload(file)
+      }
+    }
+  }, [handleThumbnailUpload])
+
+  useEffect(() => {
+    if (selectedModel && selectedModel.thumbnail_url.includes("/placeholder.svg") && !hasCaptured.current) {
+      const timer = setTimeout(() => {
+        if (captureControllerRef.current) {
+          handleCaptureThumbnail()
+          hasCaptured.current = true
+        }
+      }, 2500)
+      return () => clearTimeout(timer)
+    }
+  }, [selectedModel, handleCaptureThumbnail])
+
   const updateQuery = (newParams: Record<string, string | null>) => {
     const query = new URLSearchParams(searchParams.toString())
     Object.entries(newParams).forEach(([key, value]) => {
@@ -731,70 +769,17 @@ function GalleryPage() {
     setSelectedItems(new Set())
   }
 
-  const handleModelUpdate = async (id: string, updates: Partial<Omit<Model, "id" | "created_at">>) => {
-    await fetch(`/api/models/${id}`, {
-      method: "PATCH",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(updates),
-    })
-    mutateSelectedModel()
-    mutate(galleryUrl)
-  }
-
-  const handleThumbnailUpload = useCallback(
-    async (file: File) => {
-      if (!selectedModel) return
-      toast.info(`Uploading thumbnail...`)
-      const pathname = `thumbnails/${selectedModel.id}.${file.name.split(".").pop()}`
-      const newBlob = await upload(pathname, file, {
-        access: "public",
-        handleUploadUrl: "/api/upload",
-        clientPayload: JSON.stringify({ isThumbnail: true }),
-      })
-      await handleModelUpdate(selectedModel.id, { thumbnail_url: newBlob.url })
-    },
-    [selectedModel, handleModelUpdate],
-  )
-
-  const handleCaptureThumbnail = useCallback(async () => {
-    if (captureControllerRef.current) {
-      toast.info("Capturing thumbnail...")
-      const file = await captureControllerRef.current.capture()
-      if (file) {
-        await handleThumbnailUpload(file)
-      }
-    }
-  }, [handleThumbnailUpload])
-
-  const handleDeleteThumbnail = async () => {
-    if (!selectedModel) return
-    await handleModelUpdate(selectedModel.id, {
-      thumbnail_url: `/placeholder.svg?width=400&height=400&query=${encodeURIComponent(selectedModel.name)}`,
-    })
-    toast.success("Thumbnail deleted.")
-  }
-
-  useEffect(() => {
-    if (selectedModel && selectedModel.thumbnail_url.includes("/placeholder.svg") && !hasCaptured.current) {
-      const timer = setTimeout(() => {
-        if (captureControllerRef.current) {
-          handleCaptureThumbnail()
-          hasCaptured.current = true // Prevent re-capturing
-        }
-      }, 2500) // A bit longer to be safe
-      return () => clearTimeout(timer)
-    }
-  }, [selectedModel, handleCaptureThumbnail])
-
   const handleSaveViewSettings = async () => {
     if (!selectedModel) return
     const settingsToSave: ViewSettings = {
       lights: lights.map(({ id, visible, ...rest }) => rest),
-      lightsEnabled: true,
+      lightsEnabled,
       environmentEnabled,
+      bloomEnabled,
       bgType,
       bgColor1,
       bgColor2,
+      fieldOfView,
     }
     await handleModelUpdate(selectedModel.id, { view_settings: settingsToSave })
     toast.success("Default view saved!")
@@ -803,20 +788,15 @@ function GalleryPage() {
   const handleDeleteViewSettings = async () => {
     if (!selectedModel) return
     await handleModelUpdate(selectedModel.id, { view_settings: null })
-    resetViewSettings(null) // Reset to app default
+    resetViewSettings(null)
     toast.success("Saved view has been deleted.")
   }
 
-  const handleSaveFolderDescription = async (description: string) => {
-    if (!editingFolder) return
-    await fetch(`/api/folders/${editingFolder.id}`, {
-      method: "PATCH",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ description }),
-    })
-    toast.success("Folder description saved.")
-    mutate(galleryUrl)
-    setEditingFolder(null)
+  const handleDeleteThumbnail = async () => {
+    if (!selectedModel) return
+    const placeholderUrl = `/placeholder.svg?width=400&height=400&query=${encodeURIComponent(selectedModel.name)}`
+    await handleModelUpdate(selectedModel.id, { thumbnail_url: placeholderUrl })
+    toast.success("Custom thumbnail has been deleted.")
   }
 
   const handleBulkDownload = () => {
@@ -838,6 +818,18 @@ function GalleryPage() {
       link.click()
       document.body.removeChild(link)
     })
+  }
+
+  const handleSaveFolderDescription = async (description: string) => {
+    if (!editingFolder) return
+    await fetch(`/api/folders/${editingFolder.id}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ description }),
+    })
+    toast.success("Folder description saved.")
+    mutate(galleryUrl)
+    setEditingFolder(null)
   }
 
   const handleViewerKeyDown = useCallback(
@@ -922,13 +914,12 @@ function GalleryPage() {
     const nextPresetIndex = (currentPresetIndex + 1) % lightingPresets.length
     const preset = lightingPresets[nextPresetIndex]
 
-    // Scale down the preset light positions to be closer to models
     const scaledLights = preset.lights.map((p, i) => ({
       ...p,
       id: Date.now() + i,
       visible: true,
-      position: [p.position[0] * 0.4, p.position[1] * 0.6, p.position[2] * 0.4] as [number, number, number], // Scale positions closer
-      intensity: Math.max(p.intensity * 1.5, 1), // Increase intensity
+      position: [p.position[0] * 0.4, p.position[1] * 0.6, p.position[2] * 0.4] as [number, number, number],
+      intensity: Math.max(p.intensity * 1.5, 1),
     }))
 
     setLights(scaledLights)
@@ -961,9 +952,9 @@ function GalleryPage() {
     const newLight: Light = {
       id: Date.now(),
       visible: true,
-      position: [-2, 3, 2], // Much closer to the model
+      position: [-2, 3, 2],
       targetPosition: [0, 0, 0],
-      intensity: 3, // Increased intensity
+      intensity: 3,
       kelvin: 5500,
       decay: 1,
       angle: 45,
@@ -1017,7 +1008,6 @@ function GalleryPage() {
     toast.success("Light focused on model center.")
   }
 
-  // --- Render Logic ---
   if (modelId) {
     if (!selectedModel) {
       return (
@@ -1031,7 +1021,7 @@ function GalleryPage() {
         <Toaster richColors />
         <Canvas
           shadows
-          gl={{ preserveDrawingBuffer: true, alpha: true }} // Enable transparency and buffer preservation
+          gl={{ preserveDrawingBuffer: true, alpha: true }}
           camera={{ fov: fieldOfView }}
           onPointerMissed={(e) => e.button === 0 && setSelectedLightId(null)}
         >
@@ -1128,7 +1118,7 @@ function GalleryPage() {
         </div>
         <div className="absolute bottom-4 left-1/2 -translate-x-1/2 bg-black/50 backdrop-blur-sm p-2 rounded-full flex items-center gap-1">
           <Button
-            variant={materialMode === "white" ? "secondary" : "ghost"} // This should be active by default now
+            variant={materialMode === "white" ? "secondary" : "ghost"}
             size="icon"
             onClick={() => setMaterialMode("white")}
             className="text-white rounded-full"
@@ -1280,6 +1270,7 @@ function GalleryPage() {
           </header>
           <main
             className="relative flex-1 p-4 md:p-8 overflow-y-auto"
+            onClick={() => setSelectedItems(new Set())}
             onDragEnter={(e) => {
               e.preventDefault()
               setIsDragging(true)
@@ -1854,7 +1845,7 @@ function DirectionalPad({
           z = (z / distance) * halfSize
         }
 
-        onChange({ x: (x / halfSize) * 5, z: (z / halfSize) * 5 }) // Scale to a reasonable range
+        onChange({ x: (x / halfSize) * 5, z: (z / halfSize) * 5 })
       },
     },
     { drag: { filterTaps: true } },
@@ -2293,7 +2284,7 @@ function SettingsPanel({
               </div>
               <div className="flex items-center justify-between text-xs">
                 <label>Background</label>
-                <Select value={bgType} onValueChange={onBgTypeChange}>
+                <Select value={bgType} onValueChange={onBgTypeChange as any}>
                   <SelectTrigger className="w-1/2 h-6 text-xs bg-white/10 border-white/30">
                     <SelectValue />
                   </SelectTrigger>
