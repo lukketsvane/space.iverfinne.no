@@ -5,7 +5,7 @@ export function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs))
 }
 
-export function kelvinToRgb(kelvin: number): { r: number; g: number; b: number } {
+export function kelvinToRgb(kelvin: number) {
   const temp = kelvin / 100
 
   let red: number
