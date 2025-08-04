@@ -18,9 +18,19 @@ import { Checkbox } from "@/components/ui/checkbox"
 
 import type React from "react"
 
-import { useState, useRef, useEffect, Suspense, useCallback, Fragment, forwardRef, useMemo } from "react"
+import {
+  useState,
+  useRef,
+  useEffect,
+  Suspense,
+  useCallback,
+  Fragment,
+  forwardRef,
+  useMemo,
+  useImperativeHandle,
+} from "react"
 import { useRouter, useSearchParams } from "next/navigation"
-import { Canvas, useFrame } from "@react-three/fiber"
+import { Canvas, useFrame, useThree } from "@react-three/fiber"
 import { useGLTF, OrbitControls, Html, useProgress, SpotLight, useHelper, Plane, Bounds } from "@react-three/drei"
 import {
   Upload,
@@ -99,6 +109,22 @@ import type { Model, Folder, Light, ViewSettings, GalleryContents, GalleryItem }
 
 // --- Data Fetching ---
 const fetcher = (url: string) => fetch(url).then((res) => res.json())
+
+function dataURLtoFile(dataurl: string, filename: string) {
+  const arr = dataurl.split(",")
+  const mimeMatch = arr[0].match(/:(.*?);/)
+  if (!mimeMatch) {
+    throw new Error("Invalid data URL")
+  }
+  const mime = mimeMatch[1]
+  const bstr = atob(arr[1])
+  let n = bstr.length
+  const u8arr = new Uint8Array(n)
+  while (n--) {
+    u8arr[n] = bstr.charCodeAt(n)
+  }
+  return new File([u8arr], filename, { type: mime })
+}
 
 // --- 3D Components ---
 function Loader() {
@@ -251,6 +277,93 @@ function SpotLightInScene({
   )
 }
 
+const CaptureController = forwardRef<
+  { capture: () => Promise<File | null> },
+  { modelRef: React.RefObject<THREE.Group> }
+>(({ modelRef }, ref) => {
+  const { gl, scene, camera } = useThree()
+
+  useImperativeHandle(ref, () => ({
+    capture: async () => {
+      if (!modelRef.current) {
+        toast.error("Model not loaded yet.")
+        return null
+      }
+
+      // 1. Temporarily set background to transparent
+      const originalBackground = scene.background
+      scene.background = null
+      gl.render(scene, camera) // Force a render
+
+      // 2. Calculate model's 2D bounding box on screen
+      const box = new THREE.Box3().setFromObject(modelRef.current)
+      const corners = [
+        new THREE.Vector3(box.min.x, box.min.y, box.min.z),
+        new THREE.Vector3(box.min.x, box.min.y, box.max.z),
+        new THREE.Vector3(box.min.x, box.max.y, box.min.z),
+        new THREE.Vector3(box.min.x, box.max.y, box.max.z),
+        new THREE.Vector3(box.max.x, box.min.y, box.min.z),
+        new THREE.Vector3(box.max.x, box.min.y, box.max.z),
+        new THREE.Vector3(box.max.x, box.max.y, box.min.z),
+        new THREE.Vector3(box.max.x, box.max.y, box.max.z),
+      ]
+
+      let minX = Number.POSITIVE_INFINITY,
+        maxX = Number.NEGATIVE_INFINITY,
+        minY = Number.POSITIVE_INFINITY,
+        maxY = Number.NEGATIVE_INFINITY
+
+      corners.forEach((corner) => {
+        const screenPos = corner.clone().project(camera)
+        const x = ((screenPos.x + 1) / 2) * gl.domElement.width
+        const y = (-(screenPos.y - 1) / 2) * gl.domElement.height
+        minX = Math.min(minX, x)
+        maxX = Math.max(maxX, x)
+        minY = Math.min(minY, y)
+        maxY = Math.max(maxY, y)
+      })
+
+      const boxWidth = maxX - minX
+      const boxHeight = maxY - minY
+
+      if (boxWidth <= 0 || boxHeight <= 0) {
+        toast.error("Could not determine model bounds for capture.")
+        scene.background = originalBackground
+        return null
+      }
+
+      // 3. Create a square crop region with padding
+      const size = Math.max(boxWidth, boxHeight) * 1.2 // 20% padding
+      const centerX = minX + boxWidth / 2
+      const centerY = minY + boxHeight / 2
+      const sx = centerX - size / 2
+      const sy = centerY - size / 2
+
+      // 4. Draw the cropped region to a temporary canvas
+      const tempCanvas = document.createElement("canvas")
+      tempCanvas.width = 512 // Create a fixed size thumbnail
+      tempCanvas.height = 512
+      const ctx = tempCanvas.getContext("2d")
+      if (!ctx) {
+        toast.error("Could not create canvas context for capture.")
+        scene.background = originalBackground
+        return null
+      }
+      ctx.drawImage(gl.domElement, sx, sy, size, size, 0, 0, 512, 512)
+
+      // 5. Restore original background
+      scene.background = originalBackground
+
+      // 6. Convert canvas to File and return
+      const dataUrl = tempCanvas.toDataURL("image/png")
+      return dataURLtoFile(dataUrl, `thumbnail-${Date.now()}.png`)
+    },
+  }))
+
+  return null
+})
+CaptureController.displayName = "CaptureController"
+
 // --- Main Application Component ---
 function GalleryPage() {
   const { mutate } = useSWRConfig()
@@ -339,6 +452,7 @@ function GalleryPage() {
   const [isOrbitControlsEnabled, setIsOrbitControlsEnabled] = useState(true)
   const [isShiftDown, setIsShiftDown] = useState(false)
   const modelRef = useRef<THREE.Group>(null)
+  const captureControllerRef = useRef<{ capture: () => Promise<File | null> }>(null)
 
   const resetViewSettings = useCallback(
     (settings: ViewSettings | null | undefined) => {
@@ -828,6 +942,16 @@ function GalleryPage() {
     toast.success("Light focused on model center.")
   }
 
+  const handleCaptureThumbnail = async () => {
+    if (captureControllerRef.current) {
+      toast.info("Capturing thumbnail...")
+      const file = await captureControllerRef.current.capture()
+      if (file) {
+        await handleThumbnailUpload(file)
+      }
+    }
+  }
+
   // --- Render Logic ---
   if (modelId) {
     if (!selectedModel) {
@@ -840,7 +964,12 @@ function GalleryPage() {
     return (
       <div className="w-full h-screen relative" style={backgroundStyle}>
         <Toaster richColors />
-        <Canvas shadows camera={{ fov: 50 }} onPointerMissed={(e) => e.button === 0 && setSelectedLightId(null)}>
+        <Canvas
+          shadows
+          gl={{ preserveDrawingBuffer: true, alpha: true }} // Enable transparency and buffer preservation
+          camera={{ fov: 50 }}
+          onPointerMissed={(e) => e.button === 0 && setSelectedLightId(null)}
+        >
           <Suspense fallback={<Loader />}>
             {lightsEnabled &&
               lights.map((light) => (
@@ -854,6 +983,7 @@ function GalleryPage() {
             <Bounds fit clip damping={6} margin={1.2}>
               <ModelViewer ref={modelRef} modelUrl={selectedModel.model_url} materialMode={materialMode} />
             </Bounds>
+            <CaptureController ref={captureControllerRef} modelRef={modelRef} />
           </Suspense>
           <OrbitControls enabled={isOrbitControlsEnabled} makeDefault />
           <ambientLight intensity={0.1} />
@@ -895,6 +1025,7 @@ function GalleryPage() {
               onUpdate={handleModelUpdate}
               onDelete={() => handleBulkDelete()}
               onThumbnailUpload={handleThumbnailUpload}
+              onCaptureThumbnail={handleCaptureThumbnail}
               lights={lights}
               onLightChange={handleLightChange}
               addLight={addLight}
@@ -1787,6 +1918,7 @@ function SettingsPanel({
   onUpdate,
   onDelete,
   onThumbnailUpload,
+  onCaptureThumbnail,
   lights,
   onLightChange,
   addLight,
@@ -1815,6 +1947,7 @@ function SettingsPanel({
   onUpdate: (id: string, updates: Partial<Omit<Model, "id" | "created_at">>) => void
   onDelete: () => void
   onThumbnailUpload: (file: File) => void
+  onCaptureThumbnail: () => void
   lights: Light[]
   onLightChange: (id: number, newValues: Partial<Omit<Light, "id">>) => void
   addLight: () => void
@@ -1879,16 +2012,21 @@ function SettingsPanel({
           </div>
           <div className="flex items-center justify-between text-xs">
             <label>Thumbnail</label>
-            <Button size="sm" className="text-xs h-6" onClick={() => thumbnailInputRef.current?.click()}>
-              Upload
-            </Button>
-            <input
-              type="file"
-              ref={thumbnailInputRef}
-              className="hidden"
-              accept="image/*"
-              onChange={(e) => e.target.files && onThumbnailUpload(e.target.files[0])}
-            />
+            <div className="flex items-center gap-2">
+              <Button size="sm" className="text-xs h-6" onClick={onCaptureThumbnail}>
+                Capture View
+              </Button>
+              <Button size="sm" className="text-xs h-6" onClick={() => thumbnailInputRef.current?.click()}>
+                Upload
+              </Button>
+              <input
+                type="file"
+                ref={thumbnailInputRef}
+                className="hidden"
+                accept="image/*"
+                onChange={(e) => e.target.files && onThumbnailUpload(e.target.files[0])}
+              />
+            </div>
           </div>
           <div className="flex items-center justify-between text-xs">
             <label>Delete Model</label>
