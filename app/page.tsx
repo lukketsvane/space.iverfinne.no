@@ -159,9 +159,8 @@ function SpotLightInScene({
   useFrame(() => {
     // Ensure the light always points to its target
     target.current.position.set(...light.targetPosition)
-    if (spotLightRef.current) {
-      spotLightRef.current.target = target.current
-    }
+    // Manually update the target's matrix world to ensure the light aims correctly
+    target.current.updateMatrixWorld()
   })
 
   // Convert Kelvin temperature to an RGB color
