@@ -8,9 +8,9 @@ importers:
 
   .:
     dependencies:
-      '@hookform/resolvers':
-        specifier: ^3.9.1
-        version: 3.9.1(react-hook-form@7.62.0(react@19.0.0))
+      '@neondatabase/serverless':
+        specifier: latest
+        version: 1.0.1
       '@radix-ui/react-accordion':
         specifier: latest
         version: 1.2.11(@types/react-dom@19.0.0)(@types/react@19.0.0)(react-dom@19.0.0(react@19.0.0))(react@19.0.0)
@@ -94,7 +94,7 @@ importers:
         version: 1.2.7(@types/react-dom@19.0.0)(@types/react@19.0.0)(react-dom@19.0.0(react@19.0.0))(react@19.0.0)
       '@react-three/drei':
         specifier: latest
-        version: 10.6.1(7ca01816340f656fa6b1d2e2a790ae24)
+        version: 10.6.1(a0091d540f5c003a85ccc217e00502af)
       '@react-three/fiber':
         specifier: latest
         version: 9.3.0(@types/react@19.0.0)(expo-asset@11.1.7(expo@53.0.20(@babel/core@7.28.0)(react-native@0.80.2(@babel/core@7.28.0)(@types/react@19.0.0)(react@19.0.0))(react@19.0.0))(react-native@0.80.2(@babel/core@7.28.0)(@types/react@19.0.0)(react@19.0.0))(react@19.0.0))(expo-file-system@18.1.11(expo@53.0.20(@babel/core@7.28.0)(react-native@0.80.2(@babel/core@7.28.0)(@types/react@19.0.0)(react@19.0.0))(react@19.0.0))(react-native@0.80.2(@babel/core@7.28.0)(@types/react@19.0.0)(react@19.0.0)))(expo-gl@15.1.7(expo@53.0.20(@babel/core@7.28.0)(react-native@0.80.2(@babel/core@7.28.0)(@types/react@19.0.0)(react@19.0.0))(react@19.0.0))(react-native@0.80.2(@babel/core@7.28.0)(@types/react@19.0.0)(react@19.0.0))(react@19.0.0))(expo@53.0.20(@babel/core@7.28.0)(react-native@0.80.2(@babel/core@7.28.0)(@types/react@19.0.0)(react@19.0.0))(react@19.0.0))(immer@10.1.1)(react-dom@19.0.0(react@19.0.0))(react-native@0.80.2(@babel/core@7.28.0)(@types/react@19.0.0)(react@19.0.0))(react@19.0.0)(three@0.179.1)
@@ -107,9 +107,6 @@ importers:
       '@vercel/blob':
         specifier: latest
         version: 1.1.1
-      autoprefixer:
-        specifier: ^10.4.20
-        version: 10.4.20(postcss@8.5.0)
       class-variance-authority:
         specifier: ^0.7.1
         version: 0.7.1
@@ -188,13 +185,7 @@ importers:
       vaul:
         specifier: latest
         version: 1.1.2(@types/react-dom@19.0.0)(@types/react@19.0.0)(react-dom@19.0.0(react@19.0.0))(react@19.0.0)
-      zod:
-        specifier: ^3.24.1
-        version: 3.24.1
     devDependencies:
-      '@neondatabase/serverless':
-        specifier: ^0.9.4
-        version: 0.9.4
       '@types/node':
         specifier: ^22
         version: 22.0.0
@@ -204,6 +195,12 @@ importers:
       '@types/react-dom':
         specifier: ^19
         version: 19.0.0
+      '@types/three':
+        specifier: ^0.167.1
+        version: 0.167.1
+      autoprefixer:
+        specifier: ^10.4.20
+        version: 10.4.20(postcss@8.5.0)
       postcss:
         specifier: ^8.5
         version: 8.5.0
@@ -726,9 +723,6 @@ packages:
   '@date-fns/tz@1.2.0':
     resolution: {integrity: sha512-LBrd7MiJZ9McsOgxqWX7AaxrDjcFVjWH/tIKJd7pnR7McaslGYOP1QmmiBXdJH/H/yLCT+rcQ7FaPBUxRGUtrg==}
 
-  '@dimforge/rapier3d-compat@0.12.0':
-    resolution: {integrity: sha512-uekIGetywIgopfD97oDL5PfeezkFpNhwlzlaEYNOA0N6ghdsOvh/HYjSMek5Q2O1PYvRSDFcqFVJl4r4ZBwOow==}
-
   '@emnapi/runtime@1.4.3':
     resolution: {integrity: sha512-pBPWdu6MLKROBX05wSNKcNb++m5Er+KQ9QkB+WVM+pW2Kx9hoSrVTnu3BdkI5eBLZoKu/J6mW/B6i6bJB2ytXQ==}
 
@@ -822,11 +816,6 @@ packages:
 
   '@floating-ui/utils@0.2.10':
     resolution: {integrity: sha512-aGTxbpbg8/b5JfU1HXSrbH3wXZuLPJcNEcZQFMxLs3oSzgtVu6nFPkbbGGUvBcUjKV2YyB9Wxxabo+HEH9tcRQ==}
-
-  '@hookform/resolvers@3.9.1':
-    resolution: {integrity: sha512-ud2HqmGBM0P0IABqoskKWI6PEf6ZDDBZkFqe2Vnl+mTHCEHzr3ISjjZyCwTjC/qpL25JC9aIDkloQejvMeq0ug==}
-    peerDependencies:
-      react-hook-form: ^7.0.0
 
   '@img/sharp-darwin-arm64@0.33.5':
     resolution: {integrity: sha512-UT4p+iz/2H4twwAoLCqfA9UH5pI6DggwKEGuaPy7nCVQ8ZsiY5PIcrRvD1DzuY3qYL07NtIQcWnBSY/heikIFQ==}
@@ -1001,8 +990,9 @@ packages:
     peerDependencies:
       three: '>= 0.159.0'
 
-  '@neondatabase/serverless@0.9.4':
-    resolution: {integrity: sha512-D0AXgJh6xkf+XTlsO7iwE2Q1w8981E1cLCPAALMU2YKtkF/1SF6BiAzYARZFYo175ON+b1RNIy9TdSFHm5nteg==}
+  '@neondatabase/serverless@1.0.1':
+    resolution: {integrity: sha512-O6yC5TT0jbw86VZVkmnzCZJB0hfxBl0JJz6f+3KHoZabjb/X08r9eFA+vuY06z1/qaovykvdkrXYq3SPUuvogA==}
+    engines: {node: '>=19.0.0'}
 
   '@next/env@15.2.4':
     resolution: {integrity: sha512-+SFtMgoiYP3WoSswuNmxJOCwi06TdWE733D+WPjpXIe4LXGULwEaofiiAy6kbS0+XjM5xF5n3lKuBwN2SnqD9g==}
@@ -1922,6 +1912,9 @@ packages:
   '@types/node@22.0.0':
     resolution: {integrity: sha512-VT7KSYudcPOzP5Q0wfbowyNLaVR8QWUdw+088uFWwfvpY6uCWaXpqV6ieLAu9WBcnTa7H4Z5RLK8I5t2FuOcqw==}
 
+  '@types/node@22.17.0':
+    resolution: {integrity: sha512-bbAKTCqX5aNVryi7qXVMi+OkB3w/OyblodicMbvE38blyAz7GxXf6XYhklokijuPwwVg9sDLKRxt0ZHXQwZVfQ==}
+
   '@types/offscreencanvas@2019.7.3':
     resolution: {integrity: sha512-ieXiYmgSRXUDeOntE1InxjWyvEelZGP63M+cGuquuRLuIKKT1osnkXjxev9B7d1nXSug5vpunx+gNlbVxMlC9A==}
 
@@ -1953,8 +1946,8 @@ packages:
   '@types/stats.js@0.17.4':
     resolution: {integrity: sha512-jIBvWWShCvlBqBNIZt0KAshWpvSjhkwkEu4ZUcASoAvhmrgAUI2t1dXrjSL4xXVLB4FznPrIsX3nKXFl/Dt4vA==}
 
-  '@types/three@0.178.0':
-    resolution: {integrity: sha512-1IpVbMKbEAAWjyn0VTdVcNvI1h1NlTv3CcnwMr3NNBv/gi3PL0/EsWROnXUEkXBxl94MH5bZvS8h0WnBRmR/pQ==}
+  '@types/three@0.167.1':
+    resolution: {integrity: sha512-OCd2Uv/8/4TbmSaIRFawrCOnDMLdpaa+QGJdhlUBmdfbHjLY8k6uFc0tde2/UvcaHQ6NtLl28onj/vJfofV+Tg==}
 
   '@types/use-sync-external-store@0.0.6':
     resolution: {integrity: sha512-zFDAD+tlpf2r4asuHEj0XH6pY6i0g5NeAHPn+15wk3BV6JA69eERFXC1gyGThDkVa1zCyKr5jox1+2LbV/AMLg==}
@@ -1990,9 +1983,6 @@ packages:
   '@vercel/blob@1.1.1':
     resolution: {integrity: sha512-heiJGj2qt5qTv6yiShH9f6KRAoZGj+lz61GQ+lBRL4lhvUmKI9A51KYlQTnsUd9ymdFlKHBlvmPeG+yGz2Qsbg==}
     engines: {node: '>=16.14'}
-
-  '@webgpu/types@0.1.63':
-    resolution: {integrity: sha512-s9Kuh0nE/2+nKrvmKNMB2fE5Zlr3DL2t3OFKM55v5jRcfCOxbkOHhQoshoFum5mmXIfEtRXtLCWmkeTJsVjE9w==}
 
   '@xmldom/xmldom@0.8.10':
     resolution: {integrity: sha512-2WALfTl4xo2SkGCYRt6rDTFfk9R1czmBvUQy12gK2KuRKIpWEhcbbzy8EZXtz/jkRqHX8bFEc6FC1HjX4TUWYw==}
@@ -4187,6 +4177,9 @@ packages:
   undici-types@6.11.1:
     resolution: {integrity: sha512-mIDEX2ek50x0OlRgxryxsenE5XaQD4on5U2inY7RApK3SOJpofyw7uW2AyfMKkhAxXIceo2DeWGVGwyvng1GNQ==}
 
+  undici-types@6.21.0:
+    resolution: {integrity: sha512-iwDZqg0QAGrg9Rav5H4n0M64c3mkR59cJ6wQp+7C4nI0gsmExaedaYLNO44eT4AtBBwjbTiGPMlt2Md0T9H9JQ==}
+
   undici@5.29.0:
     resolution: {integrity: sha512-raqeBD6NQK4SkWhQzeYKd1KmIG6dllBOTt55Rmkt4HtI9mwdWtJljnrXjAFUBLTSN67HWrOIZ3EPF4kjUw80Bg==}
     engines: {node: '>=14.0'}
@@ -4415,9 +4408,6 @@ packages:
   yocto-queue@0.1.0:
     resolution: {integrity: sha512-rVksvsnNCdJ/ohGc6xgPwyN8eheCxsiLM8mxuE/t/mOVqJewPuO1miLpTHQiRgTKCLexL4MeAFVagts7HmNZ2Q==}
     engines: {node: '>=10'}
-
-  zod@3.24.1:
-    resolution: {integrity: sha512-muH7gBL9sI1nciMZV67X5fTKKBLtwpZ5VBp1vsOQzj1MhrBZ4wlVCm3gedKZWLp0Oyel8sIGfeiz54Su+OVT+A==}
 
   zustand@4.5.7:
     resolution: {integrity: sha512-CHOUy7mu3lbD6o6LJLfllpjkzhHXSBlX8B9+qPddUsIfeF5S/UZ5q0kmCsnRqT1UHFQZchNFDDzMbQsuesHWlw==}
@@ -5062,8 +5052,6 @@ snapshots:
 
   '@date-fns/tz@1.2.0': {}
 
-  '@dimforge/rapier3d-compat@0.12.0': {}
-
   '@emnapi/runtime@1.4.3':
     dependencies:
       tslib: 2.8.1
@@ -5335,10 +5323,6 @@ snapshots:
 
   '@floating-ui/utils@0.2.10': {}
 
-  '@hookform/resolvers@3.9.1(react-hook-form@7.62.0(react@19.0.0))':
-    dependencies:
-      react-hook-form: 7.62.0(react@19.0.0)
-
   '@img/sharp-darwin-arm64@0.33.5':
     optionalDependencies:
       '@img/sharp-libvips-darwin-arm64': 1.0.4
@@ -5518,8 +5502,9 @@ snapshots:
       promise-worker-transferable: 1.0.4
       three: 0.179.1
 
-  '@neondatabase/serverless@0.9.4':
+  '@neondatabase/serverless@1.0.1':
     dependencies:
+      '@types/node': 22.17.0
       '@types/pg': 8.11.6
 
   '@next/env@15.2.4': {}
@@ -6386,7 +6371,7 @@ snapshots:
     optionalDependencies:
       '@types/react': 19.0.0
 
-  '@react-three/drei@10.6.1(7ca01816340f656fa6b1d2e2a790ae24)':
+  '@react-three/drei@10.6.1(a0091d540f5c003a85ccc217e00502af)':
     dependencies:
       '@babel/runtime': 7.27.6
       '@mediapipe/tasks-vision': 0.10.17
@@ -6398,10 +6383,10 @@ snapshots:
       detect-gpu: 5.0.70
       glsl-noise: 0.0.0
       hls.js: 1.6.6
-      maath: 0.10.8(@types/three@0.178.0)(three@0.179.1)
+      maath: 0.10.8(@types/three@0.167.1)(three@0.179.1)
       meshline: 3.3.1(three@0.179.1)
       react: 19.0.0
-      stats-gl: 2.4.2(@types/three@0.178.0)(three@0.179.1)
+      stats-gl: 2.4.2(@types/three@0.167.1)(three@0.179.1)
       stats.js: 0.17.0
       suspend-react: 0.1.3(react@19.0.0)
       three: 0.179.1
@@ -6588,11 +6573,15 @@ snapshots:
     dependencies:
       undici-types: 6.11.1
 
+  '@types/node@22.17.0':
+    dependencies:
+      undici-types: 6.21.0
+
   '@types/offscreencanvas@2019.7.3': {}
 
   '@types/pg@8.11.6':
     dependencies:
-      '@types/node': 22.0.0
+      '@types/node': 22.17.0
       pg-protocol: 1.10.3
       pg-types: 4.0.2
 
@@ -6618,13 +6607,11 @@ snapshots:
 
   '@types/stats.js@0.17.4': {}
 
-  '@types/three@0.178.0':
+  '@types/three@0.167.1':
     dependencies:
-      '@dimforge/rapier3d-compat': 0.12.0
       '@tweenjs/tween.js': 23.1.3
       '@types/stats.js': 0.17.4
       '@types/webxr': 0.5.22
-      '@webgpu/types': 0.1.63
       fflate: 0.8.2
       meshoptimizer: 0.18.1
 
@@ -6668,8 +6655,6 @@ snapshots:
       is-node-process: 1.2.0
       throttleit: 2.1.0
       undici: 5.29.0
-
-  '@webgpu/types@0.1.63': {}
 
   '@xmldom/xmldom@0.8.10': {}
 
@@ -7829,9 +7814,9 @@ snapshots:
     dependencies:
       react: 19.0.0
 
-  maath@0.10.8(@types/three@0.178.0)(three@0.179.1):
+  maath@0.10.8(@types/three@0.167.1)(three@0.179.1):
     dependencies:
-      '@types/three': 0.178.0
+      '@types/three': 0.167.1
       three: 0.179.1
 
   makeerror@1.0.12:
@@ -8748,9 +8733,9 @@ snapshots:
     dependencies:
       type-fest: 0.7.1
 
-  stats-gl@2.4.2(@types/three@0.178.0)(three@0.179.1):
+  stats-gl@2.4.2(@types/three@0.167.1)(three@0.179.1):
     dependencies:
-      '@types/three': 0.178.0
+      '@types/three': 0.167.1
       three: 0.179.1
 
   stats.js@0.17.0: {}
@@ -8975,6 +8960,8 @@ snapshots:
 
   undici-types@6.11.1: {}
 
+  undici-types@6.21.0: {}
+
   undici@5.29.0:
     dependencies:
       '@fastify/busboy': 2.1.1
@@ -9160,8 +9147,6 @@ snapshots:
       yargs-parser: 21.1.1
 
   yocto-queue@0.1.0: {}
-
-  zod@3.24.1: {}
 
   zustand@4.5.7(@types/react@19.0.0)(immer@10.1.1)(react@19.0.0):
     dependencies:

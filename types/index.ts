@@ -40,11 +40,3 @@ export interface Folder {
   description?: string
   is_public: boolean
 }
-
-export interface GalleryContents {
-  folders: Folder[]
-  models: Model[]
-  currentFolder: Folder | null
-}
-
-export type GalleryItem = ({ type: "folder" } & Folder) | ({ type: "model" } & Model)
