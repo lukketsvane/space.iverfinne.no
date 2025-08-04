@@ -18,10 +18,10 @@ import { Checkbox } from "@/components/ui/checkbox"
 
 import type React from "react"
 
-import { useState, useRef, useEffect, Suspense, useCallback, Fragment } from "react"
+import { useState, useRef, useEffect, Suspense, useCallback, Fragment, forwardRef, useMemo } from "react"
 import { useRouter, useSearchParams } from "next/navigation"
 import { Canvas, useFrame } from "@react-three/fiber"
-import { useGLTF, OrbitControls, Html, useProgress, SpotLight, useHelper } from "@react-three/drei"
+import { useGLTF, OrbitControls, Html, useProgress, SpotLight, useHelper, Plane } from "@react-three/drei"
 import {
   Upload,
   FolderIcon,
@@ -49,6 +49,7 @@ import {
   Save,
   RotateCcw,
   X,
+  Crosshair,
 } from "lucide-react"
 import { upload } from "@vercel/blob/client"
 import useSWR, { useSWRConfig } from "swr"
@@ -109,37 +110,55 @@ function Loader() {
   )
 }
 
-function ModelViewer({ modelUrl, materialMode }: { modelUrl: string; materialMode: "pbr" | "normal" | "white" }) {
-  const gltf = useGLTF(modelUrl)
-  const scene = gltf.scene.clone(true)
+const ModelViewer = forwardRef<THREE.Group, { modelUrl: string; materialMode: "pbr" | "normal" | "white" }>(
+  ({ modelUrl, materialMode }, ref) => {
+    const gltf = useGLTF(modelUrl)
+    const scene = useMemo(() => gltf.scene.clone(true), [gltf.scene])
+    const originalMaterials = useRef(new Map<string, THREE.Material | THREE.Material[]>())
 
-  const originalMaterials = useRef(new Map<string, THREE.Material | THREE.Material[]>())
-  useEffect(() => {
-    scene.traverse((child) => {
-      if ((child as THREE.Mesh).isMesh) {
-        originalMaterials.current.set(child.uuid, (child as THREE.Mesh).material)
-      }
-    })
-  }, [scene])
+    // This effect runs once to set up shadows, materials, and position the model
+    useEffect(() => {
+      const box = new THREE.Box3().setFromObject(scene)
+      const center = new THREE.Vector3()
+      box.getCenter(center)
 
-  useEffect(() => {
-    scene.traverse((child) => {
-      if ((child as THREE.Mesh).isMesh) {
-        const mesh = child as THREE.Mesh
-        const originalMaterial = originalMaterials.current.get(mesh.uuid)
-        if (materialMode === "pbr") {
-          if (originalMaterial) mesh.material = originalMaterial
-        } else if (materialMode === "normal") {
-          mesh.material = new THREE.MeshNormalMaterial()
-        } else if (materialMode === "white") {
-          mesh.material = new THREE.MeshStandardMaterial({ color: "white" })
+      // Auto-center and ground the model
+      scene.position.x -= center.x
+      scene.position.z -= center.z
+      scene.position.y -= box.min.y
+
+      scene.traverse((child) => {
+        if ((child as THREE.Mesh).isMesh) {
+          // Enable shadows for all meshes
+          child.castShadow = true
+          child.receiveShadow = true
+          // Store original materials for PBR mode
+          originalMaterials.current.set(child.uuid, (child as THREE.Mesh).material)
         }
-      }
-    })
-  }, [scene, materialMode])
+      })
+    }, [scene])
 
-  return <primitive object={scene} />
-}
+    // This effect handles switching materials
+    useEffect(() => {
+      scene.traverse((child) => {
+        if ((child as THREE.Mesh).isMesh) {
+          const mesh = child as THREE.Mesh
+          if (materialMode === "pbr") {
+            const originalMaterial = originalMaterials.current.get(mesh.uuid)
+            if (originalMaterial) mesh.material = originalMaterial
+          } else if (materialMode === "normal") {
+            mesh.material = new THREE.MeshNormalMaterial()
+          } else if (materialMode === "white") {
+            mesh.material = new THREE.MeshStandardMaterial({ color: "white", roughness: 0.5, metalness: 0.1 })
+          }
+        }
+      })
+    }, [scene, materialMode])
+
+    return <primitive ref={ref} object={scene} />
+  },
+)
+ModelViewer.displayName = "ModelViewer"
 
 function SpotLightInScene({
   light,
@@ -159,7 +178,6 @@ function SpotLightInScene({
   useFrame(() => {
     // Ensure the light always points to its target
     target.current.position.set(...light.targetPosition)
-    // Manually update the target's matrix world to ensure the light aims correctly
     target.current.updateMatrixWorld()
   })
 
@@ -181,6 +199,9 @@ function SpotLightInScene({
         penumbra={light.penumbra}
         decay={light.decay}
         castShadow
+        shadow-mapSize-width={2048}
+        shadow-mapSize-height={2048}
+        shadow-bias={-0.0001}
       />
       <primitive object={target.current} />
       {/* The clickable sphere representing the light source */}
@@ -279,6 +300,7 @@ function GalleryPage() {
   const fileInputRef = useRef<HTMLInputElement>(null)
   const [isOrbitControlsEnabled, setIsOrbitControlsEnabled] = useState(true)
   const [isShiftDown, setIsShiftDown] = useState(false)
+  const modelRef = useRef<THREE.Group>(null)
 
   const resetViewSettings = useCallback((settings: ViewSettings | null | undefined) => {
     const preset = lightingPresets[0]
@@ -709,6 +731,19 @@ function GalleryPage() {
     }
   }
 
+  const focusLightOnModel = (lightId: number) => {
+    if (!modelRef.current) {
+      toast.error("Model not loaded yet.")
+      return
+    }
+    const box = new THREE.Box3().setFromObject(modelRef.current)
+    const center = new THREE.Vector3()
+    box.getCenter(center)
+
+    handleLightChange(lightId, { targetPosition: [center.x, center.y, center.z] })
+    toast.success("Light focused on model center.")
+  }
+
   // --- Render Logic ---
   if (modelId) {
     if (!selectedModel) {
@@ -736,10 +771,13 @@ function GalleryPage() {
                   onSelect={() => setSelectedLightId(light.id)}
                 />
               ))}
-            <ModelViewer modelUrl={selectedModel.model_url} materialMode={materialMode} />
+            <ModelViewer ref={modelRef} modelUrl={selectedModel.model_url} materialMode={materialMode} />
           </Suspense>
           <OrbitControls enabled={isOrbitControlsEnabled} />
           <ambientLight intensity={0.1} />
+          <Plane args={[100, 100]} rotation-x={-Math.PI / 2} receiveShadow>
+            <shadowMaterial transparent opacity={0.2} />
+          </Plane>
           {isShiftDown && selectedLightId && (
             <mesh onPointerMove={(e) => handleLightTargetMove(e.point)} visible={false}>
               <planeGeometry args={[100, 100]} />
@@ -783,6 +821,7 @@ function GalleryPage() {
               toggleLightVisibility={toggleLightVisibility}
               selectedLightId={selectedLightId}
               onSelectLight={setSelectedLightId}
+              onFocusLight={focusLightOnModel}
               lightsEnabled={lightsEnabled}
               onLightsEnabledChange={setLightsEnabled}
               environmentEnabled={environmentEnabled}
@@ -1560,9 +1599,11 @@ function DirectionalPad({
 function LightSettings({
   light,
   onLightChange,
+  onFocus,
 }: {
   light: Light
   onLightChange: (id: number, newValues: Partial<Omit<Light, "id">>) => void
+  onFocus: (id: number) => void
 }) {
   return (
     <div className="space-y-3 text-xs mt-2 bg-white/5 p-3 rounded-md">
@@ -1584,7 +1625,13 @@ function LightSettings({
         </div>
       </div>
       <div className="flex items-start justify-between">
-        <label className="pt-2">Target (X, Z)</label>
+        <div className="pt-2 space-y-2">
+          <label>Target</label>
+          <Button size="sm" className="text-xs h-6" onClick={() => onFocus(light.id)}>
+            <Crosshair className="h-3 w-3 mr-1" />
+            Focus on Model
+          </Button>
+        </div>
         <DirectionalPad
           value={{ x: light.targetPosition[0], z: light.targetPosition[2] }}
           onChange={({ x, z }) => onLightChange(light.id, { targetPosition: [x, light.targetPosition[1], z] })}
@@ -1666,6 +1713,7 @@ function SettingsPanel({
   toggleLightVisibility,
   selectedLightId,
   onSelectLight,
+  onFocusLight,
   lightsEnabled,
   onLightsEnabledChange,
   environmentEnabled,
@@ -1693,6 +1741,7 @@ function SettingsPanel({
   toggleLightVisibility: (id: number) => void
   selectedLightId: number | null
   onSelectLight: (id: number | null) => void
+  onFocusLight: (id: number) => void
   lightsEnabled: boolean
   onLightsEnabledChange: (enabled: boolean) => void
   environmentEnabled: boolean
@@ -1852,7 +1901,7 @@ function SettingsPanel({
                       </div>
                     </div>
                     <AccordionContent>
-                      <LightSettings light={light} onLightChange={onLightChange} />
+                      <LightSettings light={light} onLightChange={onLightChange} onFocus={onFocusLight} />
                     </AccordionContent>
                   </AccordionItem>
                 ))}
