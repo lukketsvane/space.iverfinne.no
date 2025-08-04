@@ -1,11 +1,10 @@
 "use client"
 
-import { ContextMenuTrigger } from "@/components/ui/context-menu"
-
 import {
   ContextMenu,
   ContextMenuContent,
   ContextMenuItem,
+  ContextMenuTrigger,
   ContextMenuSub,
   ContextMenuSubTrigger,
   ContextMenuSubContent,
@@ -22,7 +21,7 @@ import type React from "react"
 import { useState, useRef, useEffect, Suspense, useCallback, Fragment, forwardRef, useMemo } from "react"
 import { useRouter, useSearchParams } from "next/navigation"
 import { Canvas, useFrame } from "@react-three/fiber"
-import { useGLTF, OrbitControls, Html, useProgress, SpotLight, useHelper, Plane } from "@react-three/drei"
+import { useGLTF, OrbitControls, Html, useProgress, SpotLight, useHelper, Plane, Bounds } from "@react-three/drei"
 import {
   Upload,
   FolderIcon,
@@ -30,6 +29,7 @@ import {
   Palette,
   Trash2,
   Pencil,
+  MoreVertical,
   FolderPlus,
   ChevronRight,
   Download,
@@ -40,11 +40,13 @@ import {
   ListFilter,
   LoaderIcon,
   Info,
+  Plus,
   Eye,
   EyeOff,
   CopyIcon as Clone,
   Globe,
   Lock,
+  Save,
   RotateCcw,
   X,
   Crosshair,
@@ -53,6 +55,7 @@ import { upload } from "@vercel/blob/client"
 import useSWR, { useSWRConfig } from "swr"
 import { Toaster, toast } from "sonner"
 import * as THREE from "three"
+import { useGesture } from "@use-gesture/react"
 
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -337,60 +340,78 @@ function GalleryPage() {
   const [isShiftDown, setIsShiftDown] = useState(false)
   const modelRef = useRef<THREE.Group>(null)
 
-  const resetViewSettings = useCallback((settings: ViewSettings | null | undefined) => {
-    // Create better default lights that are close enough to illuminate models
-    const defaultLights = [
-      {
-        id: Date.now(),
-        visible: true,
-        position: [-2, 3, 2] as [number, number, number],
-        targetPosition: [0, 0, 0] as [number, number, number],
-        intensity: 3,
-        kelvin: 5500,
-        decay: 1,
-        angle: 45,
-        penumbra: 0.5,
-      },
-      {
-        id: Date.now() + 1,
-        visible: true,
-        position: [2, 2, -1] as [number, number, number],
-        targetPosition: [0, 0, 0] as [number, number, number],
-        intensity: 2,
-        kelvin: 4000,
-        decay: 1,
-        angle: 60,
-        penumbra: 0.3,
-      },
-    ]
+  const resetViewSettings = useCallback(
+    (settings: ViewSettings | null | undefined) => {
+      // Create better default lights that are close enough to illuminate models
+      const defaultLights = [
+        {
+          id: Date.now(),
+          visible: true,
+          position: [-2, 3, 2] as [number, number, number],
+          targetPosition: [0, 0, 0] as [number, number, number],
+          intensity: 3,
+          kelvin: 5500,
+          decay: 1,
+          angle: 45,
+          penumbra: 0.5,
+        },
+        {
+          id: Date.now() + 1,
+          visible: true,
+          position: [2, 2, -1] as [number, number, number],
+          targetPosition: [0, 0, 0] as [number, number, number],
+          intensity: 2,
+          kelvin: 4000,
+          decay: 1,
+          angle: 60,
+          penumbra: 0.3,
+        },
+      ]
 
-    if (settings && settings.lights) {
-      const newLights = settings.lights.map((l, i) => ({
-        ...l,
-        id: Date.now() + i,
-        visible: true, // Lights from settings are visible by default
-      }))
-      setLights(newLights)
-      setLightsEnabled(settings.lightsEnabled)
-      setEnvironmentEnabled(settings.environmentEnabled)
-      setBgType(settings.bgType)
-      setBgColor1(settings.bgColor1)
-      setBgColor2(settings.bgColor2)
-      setSelectedLightId(newLights[0]?.id ?? null)
-    } else {
-      setLights(defaultLights)
-      setLightsEnabled(true)
-      setEnvironmentEnabled(true)
-      setBgType("color")
-      setBgColor1("#000000")
-      setBgColor2("#1a1a1a")
-      setSelectedLightId(defaultLights[0]?.id ?? null)
-    }
-    setCurrentPresetIndex(0)
-  }, [])
+      if (settings && settings.lights) {
+        const newLights = settings.lights.map((l, i) => ({
+          ...l,
+          id: Date.now() + i,
+          visible: true, // Lights from settings are visible by default
+        }))
+        setLights(newLights)
+        setLightsEnabled(settings.lightsEnabled)
+        setEnvironmentEnabled(settings.environmentEnabled)
+        setBgType(settings.bgType)
+        setBgColor1(settings.bgColor1)
+        setBgColor2(settings.bgColor2)
+        setSelectedLightId(newLights[0]?.id ?? null)
+      } else {
+        setLights(defaultLights)
+        setLightsEnabled(true)
+        setEnvironmentEnabled(true)
+        setBgType("color")
+        setBgColor1("#000000")
+        setBgColor2("#1a1a1a")
+        setSelectedLightId(defaultLights[0]?.id ?? null)
+      }
+      setCurrentPresetIndex(0)
+    },
+    [
+      setLights,
+      setLightsEnabled,
+      setEnvironmentEnabled,
+      setBgType,
+      setBgColor1,
+      setBgColor2,
+      setSelectedLightId,
+      setCurrentPresetIndex,
+    ],
+  )
 
   useEffect(() => {
-    resetViewSettings(selectedModel?.view_settings)
+    // When a new model is selected, check if it has its own saved view settings.
+    if (selectedModel?.view_settings) {
+      // If it does, apply them.
+      resetViewSettings(selectedModel.view_settings)
+    }
+    // If it does not have saved settings, we do nothing,
+    // which preserves the current lighting and environment from the previous model.
   }, [selectedModel, resetViewSettings])
 
   // --- Navigation and Actions ---
@@ -819,11 +840,7 @@ function GalleryPage() {
     return (
       <div className="w-full h-screen relative" style={backgroundStyle}>
         <Toaster richColors />
-        <Canvas
-          shadows
-          camera={{ fov: 50, position: [0, 2, 8] }}
-          onPointerMissed={(e) => e.button === 0 && setSelectedLightId(null)}
-        >
+        <Canvas shadows camera={{ fov: 50 }} onPointerMissed={(e) => e.button === 0 && setSelectedLightId(null)}>
           <Suspense fallback={<Loader />}>
             {lightsEnabled &&
               lights.map((light) => (
@@ -834,9 +851,11 @@ function GalleryPage() {
                   onSelect={() => setSelectedLightId(light.id)}
                 />
               ))}
-            <ModelViewer ref={modelRef} modelUrl={selectedModel.model_url} materialMode={materialMode} />
+            <Bounds fit clip damping={6} margin={1.2}>
+              <ModelViewer ref={modelRef} modelUrl={selectedModel.model_url} materialMode={materialMode} />
+            </Bounds>
           </Suspense>
-          <OrbitControls enabled={isOrbitControlsEnabled} />
+          <OrbitControls enabled={isOrbitControlsEnabled} makeDefault />
           <ambientLight intensity={0.1} />
           <Plane args={[100, 100]} rotation-x={-Math.PI / 2} receiveShadow>
             <shadowMaterial transparent opacity={0.2} />
@@ -1353,28 +1372,65 @@ const ContextMenuItems = ({ onRename, onDelete, onMove, onSetPublic, allFolders,
   </>
 )
 
-type MenuItemsProps = {
+interface MenuItemsProps {
   onRename: () => void
   onDelete: () => void
   onMove: (targetFolderId: string | null) => void
   onSetPublic: (isPublic: boolean) => void
-  allFolders?: Folder[] | null
-  currentItem: Folder | Model
+  allFolders?: Folder[]
+  currentItem: GalleryItem
 }
 
 function ItemContextMenu({
-  item,
   children,
+  item,
   onRename,
   onDelete,
   onMove,
   onSetPublic,
   allFolders,
-}: MenuItemsProps & { children: React.ReactNode }) {
+}: {
+  children: React.ReactNode
+  item: GalleryItem
+  onRename: () => void
+  onDelete: () => void
+  onMove: (targetFolderId: string | null) => void
+  onSetPublic: (isPublic: boolean) => void
+  allFolders?: Folder[]
+}) {
   return (
     <ContextMenu>
-      <ContextMenuTrigger asChild>{children}</ContextMenuTrigger>
-      <ContextMenuContent className="w-60">
+      <ContextMenuTrigger className="w-full h-full" onContextMenu={(e) => e.stopPropagation()}>
+        <div className="relative group w-full h-full">
+          {children}
+          <div className="absolute top-2 right-2">
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  className="h-7 w-7 opacity-0 group-hover:opacity-100 focus-visible:opacity-100 bg-black/30 hover:bg-black/50 text-white hover:text-white"
+                  onClick={(e) => e.stopPropagation()}
+                  onContextMenu={(e) => e.stopPropagation()}
+                >
+                  <MoreVertical className="h-4 w-4" />
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent onClick={(e) => e.stopPropagation()}>
+                <DropdownMenuItems
+                  onRename={onRename}
+                  onDelete={onDelete}
+                  onMove={onMove}
+                  onSetPublic={onSetPublic}
+                  allFolders={allFolders}
+                  currentItem={item}
+                />
+              </DropdownMenuContent>
+            </DropdownMenu>
+          </div>
+        </div>
+      </ContextMenuTrigger>
+      <ContextMenuContent onClick={(e) => e.stopPropagation()}>
         <ContextMenuItems
           onRename={onRename}
           onDelete={onDelete}
@@ -1388,111 +1444,31 @@ function ItemContextMenu({
   )
 }
 
-function BulkActionBar({
-  selectedCount,
-  onClear,
-  onDelete,
-  onMove,
-  onSetPublic,
-  onDownload,
-  allItems,
-  selectedIds,
-  allFolders,
-  currentFolderId,
-}: {
-  selectedCount: number
-  onClear: () => void
-  onDelete: () => void
-  onMove: (targetFolderId: string | null) => void
-  onSetPublic: (isPublic: boolean) => void
-  onDownload: () => void
-  allItems: GalleryItem[]
-  selectedIds: Set<string>
-  allFolders?: Folder[] | null
-  currentFolderId: string | null
-}) {
-  const [isMoveDialogOpen, setIsMoveDialogOpen] = useState(false)
-  const selectedItems = useMemo(() => allItems.filter((item) => selectedIds.has(item.id)), [allItems, selectedIds])
-  const hasModels = useMemo(() => selectedItems.some((item) => item.type === "model"), [selectedItems])
-
-  return (
-    <div className="sticky bottom-0 bg-secondary/80 backdrop-blur-sm p-4 border-t">
-      <div className="md:flex items-center justify-between gap-2">
-        <p className="text-sm text-muted-foreground">
-          Selected <span className="font-medium">{selectedCount}</span> item
-          {selectedCount > 1 ? "s" : ""}
-        </p>
-        <div className="flex items-center gap-2">
-          <Button variant="outline" size="sm" onClick={onClear}>
-            Cancel
-          </Button>
-          <Button variant="destructive" size="sm" onClick={onDelete}>
-            Delete
-          </Button>
-          <Button variant="secondary" size="sm" onClick={() => setIsMoveDialogOpen(true)}>
-            Move
-          </Button>
-          {hasModels && (
-            <Button variant="secondary" size="sm" onClick={onDownload}>
-              Download
-            </Button>
-          )}
-        </div>
-      </div>
-      <Dialog open={isMoveDialogOpen} onOpenChange={setIsMoveDialogOpen}>
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>Move items</DialogTitle>
-            <DialogDescription>Select a folder to move the selected items to.</DialogDescription>
-          </DialogHeader>
-          <Select onValueChange={(folderId) => onMove(folderId === "root" ? null : folderId)}>
-            <SelectTrigger className="w-full">
-              <SelectValue placeholder="Select a folder" />
-            </SelectTrigger>
-            <SelectContent>
-              {currentFolderId !== null && <SelectItem value="root">Assets (Root)</SelectItem>}
-              {allFolders
-                ?.filter((f) => f.id !== currentFolderId)
-                .map((folder) => (
-                  <SelectItem key={folder.id} value={folder.id}>
-                    {folder.name}
-                  </SelectItem>
-                ))}
-            </SelectContent>
-          </Select>
-          <DialogFooter>
-            <Button onClick={() => setIsMoveDialogOpen(false)}>Cancel</Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
-    </div>
-  )
-}
-
 function NewFolderDialog({
   open,
   onOpenChange,
   onCreate,
-}: { open: boolean; onOpenChange: (open: boolean) => void; onCreate: (name: string) => void }) {
+}: {
+  open: boolean
+  onOpenChange: (open: boolean) => void
+  onCreate: (name: string) => void
+}) {
   const [name, setName] = useState("")
-
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="sm:max-w-[425px]">
+      <DialogContent className="bg-black/50 backdrop-blur-sm border-white/20 text-white">
         <DialogHeader>
-          <DialogTitle>Create folder</DialogTitle>
-          <DialogDescription>Give your folder a name.</DialogDescription>
+          <DialogTitle>New Folder</DialogTitle>
         </DialogHeader>
-        <div className="grid gap-4 py-4">
-          <div className="grid grid-cols-4 items-center gap-4">
-            <Input id="name" value={name} onChange={(e) => setName(e.target.value)} className="col-span-3" />
-          </div>
-        </div>
+        <Input
+          value={name}
+          onChange={(e) => setName(e.target.value)}
+          placeholder="Enter folder name"
+          onKeyDown={(e) => e.key === "Enter" && name && onCreate(name)}
+          className="bg-white/10 border-white/20"
+        />
         <DialogFooter>
-          <Button type="button" variant="secondary" onClick={() => onOpenChange(false)}>
-            Cancel
-          </Button>
-          <Button type="submit" onClick={() => onCreate(name)}>
+          <Button onClick={() => name && onCreate(name)} disabled={!name}>
             Create
           </Button>
         </DialogFooter>
@@ -1505,27 +1481,27 @@ function RenameDialog({
   item,
   onOpenChange,
   onRename,
-}: { item: GalleryItem; onOpenChange: (open: boolean) => void; onRename: (name: string) => void }) {
+}: {
+  item: GalleryItem
+  onOpenChange: (open: boolean) => void
+  onRename: (name: string) => void
+}) {
   const [name, setName] = useState(item.name)
-
   return (
-    <Dialog open={!!item} onOpenChange={onOpenChange}>
-      <DialogContent className="sm:max-w-[425px]">
+    <Dialog open={true} onOpenChange={onOpenChange}>
+      <DialogContent className="bg-black/50 backdrop-blur-sm border-white/20 text-white">
         <DialogHeader>
           <DialogTitle>Rename {item.type}</DialogTitle>
-          <DialogDescription>Enter a new name for this {item.type}.</DialogDescription>
         </DialogHeader>
-        <div className="grid gap-4 py-4">
-          <div className="grid grid-cols-4 items-center gap-4">
-            <Input id="name" value={name} onChange={(e) => setName(e.target.value)} className="col-span-3" />
-          </div>
-        </div>
+        <Input
+          value={name}
+          onChange={(e) => setName(e.target.value)}
+          onKeyDown={(e) => e.key === "Enter" && name && onRename(name)}
+          className="bg-white/10 border-white/20"
+        />
         <DialogFooter>
-          <Button type="button" variant="secondary" onClick={() => onOpenChange(false)}>
-            Cancel
-          </Button>
-          <Button type="submit" onClick={() => onRename(name)}>
-            Rename
+          <Button onClick={() => name && onRename(name)} disabled={!name}>
+            Save
           </Button>
         </DialogFooter>
       </DialogContent>
@@ -1545,27 +1521,264 @@ function FolderDescriptionDialog({
   onSave: (description: string) => void
 }) {
   const [description, setDescription] = useState(folder.description || "")
+  const wordCount = description.trim() ? description.trim().split(/\s+/).length : 0
+
+  const handleSave = () => {
+    if (wordCount <= 150) {
+      onSave(description)
+    } else {
+      toast.error("Description cannot exceed 150 words.")
+    }
+  }
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="sm:max-w-[425px]">
+      <DialogContent className="bg-black/50 backdrop-blur-sm border-white/20 text-white">
         <DialogHeader>
-          <DialogTitle>Edit folder description</DialogTitle>
-          <DialogDescription>Add or edit the description for this folder.</DialogDescription>
+          <DialogTitle>Edit Description for "{folder.name}"</DialogTitle>
+          <DialogDescription className="text-gray-400">
+            Add a description or comma-separated tags. This will be used for searching models within this folder.
+          </DialogDescription>
         </DialogHeader>
-        <div className="grid gap-4 py-4">
-          <Textarea value={description} onChange={(e) => setDescription(e.target.value)} />
+        <Textarea
+          value={description}
+          onChange={(e) => setDescription(e.target.value)}
+          placeholder="e.g. sci-fi, characters, hard-surface"
+          className="bg-white/10 border-white/20 min-h-[120px]"
+          rows={5}
+        />
+        <div className={`text-right text-sm ${wordCount > 150 ? "text-destructive" : "text-muted-foreground"}`}>
+          {wordCount} / 150 words
         </div>
         <DialogFooter>
-          <Button type="button" variant="secondary" onClick={() => onOpenChange(false)}>
+          <Button variant="secondary" onClick={() => onOpenChange(false)}>
             Cancel
           </Button>
-          <Button type="submit" onClick={() => onSave(description)}>
+          <Button onClick={handleSave} disabled={wordCount > 150}>
             Save
           </Button>
         </DialogFooter>
       </DialogContent>
     </Dialog>
+  )
+}
+
+function EditableValue({
+  value,
+  onSave,
+  units = "",
+  className,
+  inputClassName,
+}: {
+  value: string | number
+  onSave: (newValue: string) => void
+  units?: string
+  className?: string
+  inputClassName?: string
+}) {
+  const [isEditing, setIsEditing] = useState(false)
+  const [currentValue, setCurrentValue] = useState(value.toString())
+  const inputRef = useRef<HTMLInputElement>(null)
+
+  useEffect(() => {
+    setCurrentValue(value.toString())
+  }, [value])
+
+  useEffect(() => {
+    if (isEditing && inputRef.current) {
+      inputRef.current.focus()
+      inputRef.current.select()
+    }
+  }, [isEditing])
+
+  const handleSave = () => {
+    onSave(currentValue)
+    setIsEditing(false)
+  }
+
+  if (isEditing) {
+    return (
+      <Input
+        ref={inputRef}
+        type="text"
+        value={currentValue}
+        onChange={(e) => setCurrentValue(e.target.value)}
+        onBlur={handleSave}
+        onKeyDown={(e) => {
+          if (e.key === "Enter") handleSave()
+          if (e.key === "Escape") setIsEditing(false)
+        }}
+        className={`h-6 text-xs w-full text-right bg-white/20 border-white/30 ${inputClassName}`}
+      />
+    )
+  }
+
+  return (
+    <span
+      onClick={() => setIsEditing(true)}
+      className={`cursor-pointer text-xs w-full text-right truncate ${className}`}
+      title={typeof value === "number" ? value.toFixed(2) : value}
+    >
+      {typeof value === "number" ? value.toFixed(units === "K" ? 0 : 1) : value}
+      {units}
+    </span>
+  )
+}
+
+function DirectionalPad({
+  value,
+  onChange,
+}: {
+  value: { x: number; z: number }
+  onChange: (newValue: { x: number; z: number }) => void
+}) {
+  const padRef = useRef<HTMLDivElement>(null)
+
+  const bind = useGesture(
+    {
+      onDrag: ({ xy }) => {
+        if (!padRef.current) return
+        const rect = padRef.current.getBoundingClientRect()
+        const size = rect.width
+        const halfSize = size / 2
+        let x = xy[0] - rect.left - halfSize
+        let z = xy[1] - rect.top - halfSize
+
+        const distance = Math.sqrt(x * x + z * z)
+        if (distance > halfSize) {
+          x = (x / distance) * halfSize
+          z = (z / distance) * halfSize
+        }
+
+        onChange({ x: (x / halfSize) * 5, z: (z / halfSize) * 5 }) // Scale to a reasonable range
+      },
+    },
+    { drag: { filterTaps: true } },
+  )
+
+  const handleX = (value.x / 5) * 50
+  const handleZ = (value.z / 5) * 50
+
+  return (
+    <div
+      ref={padRef}
+      {...bind()}
+      className="w-24 h-24 bg-white/10 rounded-full relative cursor-pointer border border-white/20 flex items-center justify-center"
+    >
+      <div className="w-full h-px bg-white/20 absolute" />
+      <div className="h-full w-px bg-white/20 absolute" />
+      <div
+        className="w-4 h-4 bg-blue-500 rounded-full absolute border-2 border-white"
+        style={{
+          transform: `translate(${handleX}px, ${handleZ}px)`,
+          touchAction: "none",
+        }}
+      />
+    </div>
+  )
+}
+
+function LightSettings({
+  light,
+  onLightChange,
+  onFocus,
+}: {
+  light: Light
+  onLightChange: (id: number, newValues: Partial<Omit<Light, "id">>) => void
+  onFocus: (id: number) => void
+}) {
+  return (
+    <div className="space-y-3 text-xs mt-2 bg-white/5 p-3 rounded-md">
+      <div className="flex items-center justify-between">
+        <label>Position (X, Y, Z)</label>
+        <div className="flex gap-1 w-1/2">
+          <EditableValue
+            value={light.position[0]}
+            onSave={(v) => onLightChange(light.id, { position: [Number(v), light.position[1], light.position[2]] })}
+          />
+          <EditableValue
+            value={light.position[1]}
+            onSave={(v) => onLightChange(light.id, { position: [light.position[0], Number(v), light.position[2]] })}
+          />
+          <EditableValue
+            value={light.position[2]}
+            onSave={(v) => onLightChange(light.id, { position: [light.position[0], light.position[1], Number(v)] })}
+          />
+        </div>
+      </div>
+      <div className="flex items-start justify-between">
+        <div className="pt-2 space-y-2">
+          <label>Target</label>
+          <Button size="sm" className="text-xs h-6" onClick={() => onFocus(light.id)}>
+            <Crosshair className="h-3 w-3 mr-1" />
+            Focus on Model
+          </Button>
+        </div>
+        <DirectionalPad
+          value={{ x: light.targetPosition[0], z: light.targetPosition[2] }}
+          onChange={({ x, z }) => onLightChange(light.id, { targetPosition: [x, light.targetPosition[1], z] })}
+        />
+      </div>
+      <div className="flex items-center justify-between">
+        <label>Target Height (Y)</label>
+        <Slider
+          value={[light.targetPosition[1]]}
+          onValueChange={([v]) =>
+            onLightChange(light.id, {
+              targetPosition: [light.targetPosition[0], v, light.targetPosition[2]],
+            })
+          }
+          min={-10}
+          max={10}
+          step={0.1}
+          className="w-1/2"
+        />
+      </div>
+      <div className="flex items-center justify-between">
+        <label>Intensity</label>
+        <Slider
+          value={[light.intensity]}
+          onValueChange={([v]) => onLightChange(light.id, { intensity: v })}
+          min={0}
+          max={250}
+          step={0.1}
+          className="w-1/2"
+        />
+      </div>
+      <div className="flex items-center justify-between">
+        <label>Color Temp</label>
+        <Slider
+          value={[light.kelvin]}
+          onValueChange={([v]) => onLightChange(light.id, { kelvin: v })}
+          min={1000}
+          max={12000}
+          step={100}
+          className="w-1/2"
+        />
+      </div>
+      <div className="flex items-center justify-between">
+        <label>Cone Angle</label>
+        <Slider
+          value={[light.angle]}
+          onValueChange={([v]) => onLightChange(light.id, { angle: v })}
+          min={0}
+          max={90}
+          step={1}
+          className="w-1/2"
+        />
+      </div>
+      <div className="flex items-center justify-between">
+        <label>Penumbra</label>
+        <Slider
+          value={[light.penumbra]}
+          onValueChange={([v]) => onLightChange(light.id, { penumbra: v })}
+          min={0}
+          max={1}
+          step={0.01}
+          className="w-1/2"
+        />
+      </div>
+    </div>
   )
 }
 
@@ -1610,7 +1823,7 @@ function SettingsPanel({
   toggleLightVisibility: (id: number) => void
   selectedLightId: number | null
   onSelectLight: (id: number | null) => void
-  onFocusLight: (lightId: number) => void
+  onFocusLight: (id: number) => void
   lightsEnabled: boolean
   onLightsEnabledChange: (enabled: boolean) => void
   environmentEnabled: boolean
@@ -1618,264 +1831,316 @@ function SettingsPanel({
   bgType: "color" | "gradient" | "image"
   onBgTypeChange: (type: "color" | "gradient" | "image") => void
   bgColor1: string
-  onBgColor1Change: (color: string) => void
+  onBgColor1Change: (value: string) => void
   bgColor2: string
-  onBgColor2Change: (color: string) => void
+  onBgColor2Change: (value: string) => void
   bgImage: string | null
-  onBgImageChange: (image: string | null) => void
+  onBgImageChange: (value: string | null) => void
   onSaveView: () => void
   onResetView: () => void
 }) {
-  const [name, setName] = useState(model.name)
-  const [isPublic, setIsPublic] = useState(model.is_public)
-  const fileInputRef = useRef<HTMLInputElement>(null)
+  const [showDeleteConfirm, setShowDeleteConfirm] = useState(false)
+  const thumbnailInputRef = useRef<HTMLInputElement>(null)
+  const bgImageInputRef = useRef<HTMLInputElement>(null)
+
+  const handleBgImageUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0]
+    if (file) {
+      const reader = new FileReader()
+      reader.onloadend = () => {
+        onBgImageChange(reader.result as string)
+      }
+      reader.readAsDataURL(file)
+    }
+  }
 
   return (
-    <div className="flex flex-col gap-4 p-4">
-      <Accordion type="single" collapsible>
-        <AccordionItem value="model">
-          <AccordionTrigger>Model Settings</AccordionTrigger>
-          <AccordionContent>
-            <div className="grid gap-2">
-              <div className="grid grid-cols-3 items-center gap-4">
-                <label htmlFor="name" className="text-right text-sm font-medium leading-none">
-                  Name
-                </label>
-                <Input
-                  id="name"
-                  value={name}
-                  onChange={(e) => setName(e.target.value)}
-                  className="col-span-2"
-                  onBlur={() => onUpdate(model.id, { name })}
-                />
-              </div>
-              <div className="grid grid-cols-3 items-center gap-4">
-                <label htmlFor="isPublic" className="text-right text-sm font-medium leading-none">
-                  Public
-                </label>
-                <Switch
-                  id="isPublic"
-                  checked={isPublic}
-                  onCheckedChange={(checked) => {
-                    setIsPublic(checked)
-                    onUpdate(model.id, { is_public: checked })
-                  }}
-                  className="col-span-2 justify-start"
-                />
-              </div>
-              <div className="grid grid-cols-3 items-center gap-4">
-                <label htmlFor="thumbnail" className="text-right text-sm font-medium leading-none">
-                  Thumbnail
-                </label>
-                <Button
-                  variant="outline"
-                  size="sm"
-                  className="col-span-2 justify-start bg-transparent"
-                  onClick={() => fileInputRef.current?.click()}
-                >
-                  Upload
+    <div className="px-4 pb-4 flex flex-col h-full text-white overflow-y-auto">
+      <div className="space-y-4 flex-1 overflow-y-auto pr-2 -mr-2">
+        <div className="space-y-2">
+          <h3 className="text-sm font-semibold">Model</h3>
+          <div className="flex items-center justify-between text-xs">
+            <label>Name</label>
+            <div className="w-1/2">
+              <EditableValue value={model.name} onSave={(newName) => onUpdate(model.id, { name: newName })} />
+            </div>
+          </div>
+          <div className="flex items-center justify-between text-xs">
+            <label>Visibility</label>
+            <Button
+              size="sm"
+              className="text-xs h-6 bg-transparent"
+              variant="outline"
+              onClick={() => onUpdate(model.id, { is_public: !model.is_public })}
+            >
+              {model.is_public ? <Globe className="h-3 w-3 mr-1" /> : <Lock className="h-3 w-3 mr-1" />}
+              {model.is_public ? "Public" : "Private"}
+            </Button>
+          </div>
+          <div className="flex items-center justify-between text-xs">
+            <label>Thumbnail</label>
+            <Button size="sm" className="text-xs h-6" onClick={() => thumbnailInputRef.current?.click()}>
+              Upload
+            </Button>
+            <input
+              type="file"
+              ref={thumbnailInputRef}
+              className="hidden"
+              accept="image/*"
+              onChange={(e) => e.target.files && onThumbnailUpload(e.target.files[0])}
+            />
+          </div>
+          <div className="flex items-center justify-between text-xs">
+            <label>Delete Model</label>
+            {!showDeleteConfirm ? (
+              <Button
+                variant="destructive"
+                size="sm"
+                className="text-xs h-6"
+                onClick={() => setShowDeleteConfirm(true)}
+              >
+                Delete
+              </Button>
+            ) : (
+              <div className="flex gap-1">
+                <Button size="sm" className="text-xs h-6" onClick={() => setShowDeleteConfirm(false)}>
+                  Cancel
                 </Button>
-                <input
-                  type="file"
-                  ref={fileInputRef}
-                  onChange={(e) => {
-                    if (e.target.files && e.target.files[0]) onThumbnailUpload(e.target.files[0])
-                  }}
-                  className="hidden"
-                  accept="image/*"
-                />
+                <Button variant="destructive" size="sm" className="text-xs h-6" onClick={onDelete}>
+                  Confirm
+                </Button>
               </div>
-              <Button variant="destructive" onClick={onDelete}>
-                Delete Model
+            )}
+          </div>
+        </div>
+        <Separator className="bg-white/20" />
+        <div className="space-y-2">
+          <div className="flex items-center justify-between">
+            <h3 className="text-sm font-semibold">View Settings</h3>
+            <div className="flex items-center gap-2">
+              <Button variant="ghost" size="icon" className="h-6 w-6" onClick={onResetView}>
+                <RotateCcw className="h-4 w-4" />
+              </Button>
+              <Button variant="default" size="sm" className="text-xs h-6" onClick={onSaveView}>
+                <Save className="h-3 w-3 mr-1" />
+                Save View
               </Button>
             </div>
-          </AccordionContent>
-        </AccordionItem>
-        <AccordionItem value="lighting">
-          <AccordionTrigger>Lighting</AccordionTrigger>
-          <AccordionContent>
-            <div className="grid gap-2">
-              <div className="flex items-center justify-between">
-                <label htmlFor="lightsEnabled" className="text-sm font-medium leading-none">
-                  Lights Enabled
-                </label>
-                <Switch id="lightsEnabled" checked={lightsEnabled} onCheckedChange={onLightsEnabledChange} />
-              </div>
-              {lightsEnabled &&
-                lights.map((light) => (
-                  <div key={light.id} className="border rounded-md p-2">
-                    <div className="flex items-center justify-between">
-                      <h4 className="text-sm font-semibold">Light {lights.indexOf(light) + 1}</h4>
-                      <div className="flex items-center gap-2">
-                        <Button variant="ghost" size="icon" onClick={() => onSelectLight(light.id)}>
-                          {selectedLightId === light.id ? (
-                            <Crosshair className="h-4 w-4" />
-                          ) : (
-                            <Crosshair className="h-4 w-4 opacity-30" />
-                          )}
-                        </Button>
-                        <Button variant="ghost" size="icon" onClick={() => toggleLightVisibility(light.id)}>
+          </div>
+        </div>
+        <div className="space-y-2">
+          <div className="flex items-center justify-between">
+            <h3 className="text-sm font-semibold">Lights</h3>
+            <Switch checked={lightsEnabled} onCheckedChange={onLightsEnabledChange} />
+          </div>
+          {lightsEnabled && (
+            <>
+              <Accordion
+                type="single"
+                collapsible
+                className="w-full"
+                value={selectedLightId?.toString()}
+                onValueChange={(val) => onSelectLight(val ? Number(val) : null)}
+              >
+                {lights.map((light, index) => (
+                  <AccordionItem key={light.id} value={light.id.toString()} className="border-b-white/10">
+                    <div className="flex items-center w-full hover:bg-white/5 rounded-t-md">
+                      <AccordionTrigger className="flex-1 px-3 py-2 text-xs">Light {index + 1}</AccordionTrigger>
+                      <div className="flex items-center gap-1 pr-3">
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          className="h-6 w-6"
+                          onClick={(e) => {
+                            e.stopPropagation()
+                            toggleLightVisibility(light.id)
+                          }}
+                        >
                           {light.visible ? <Eye className="h-4 w-4" /> : <EyeOff className="h-4 w-4" />}
                         </Button>
-                        <Button variant="ghost" size="icon" onClick={() => cloneLight(light.id)}>
-                          <Clone className="h-4 w-4" />
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          className="h-6 w-6"
+                          onClick={(e) => {
+                            e.stopPropagation()
+                            cloneLight(light.id)
+                          }}
+                        >
+                          <Clone className="h-3 w-3" />
                         </Button>
-                        <Button variant="ghost" size="icon" onClick={() => onFocusLight(light.id)}>
-                          <RotateCcw className="h-4 w-4" />
-                        </Button>
-                        <Button variant="ghost" size="icon" onClick={() => removeLight(light.id)}>
-                          <X className="h-4 w-4" />
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          className="h-6 w-6 hover:text-destructive"
+                          onClick={(e) => {
+                            e.stopPropagation()
+                            removeLight(light.id)
+                          }}
+                        >
+                          <Trash2 className="h-3 w-3" />
                         </Button>
                       </div>
                     </div>
-                    <div className="grid grid-cols-2 gap-2 mt-2">
-                      <div>
-                        <label htmlFor={`intensity-${light.id}`} className="block text-sm font-medium text-white">
-                          Intensity
-                        </label>
-                        <Slider
-                          id={`intensity-${light.id}`}
-                          defaultValue={[light.intensity]}
-                          min={0}
-                          max={5}
-                          step={0.1}
-                          onValueChange={(value) => onLightChange(light.id, { intensity: value[0] })}
-                        />
-                      </div>
-                      <div>
-                        <label htmlFor={`kelvin-${light.id}`} className="block text-sm font-medium text-white">
-                          Kelvin
-                        </label>
-                        <Slider
-                          id={`kelvin-${light.id}`}
-                          defaultValue={[light.kelvin]}
-                          min={2000}
-                          max={10000}
-                          step={100}
-                          onValueChange={(value) => onLightChange(light.id, { kelvin: value[0] })}
-                        />
-                      </div>
-                      <div>
-                        <label htmlFor={`angle-${light.id}`} className="block text-sm font-medium text-white">
-                          Angle
-                        </label>
-                        <Slider
-                          id={`angle-${light.id}`}
-                          defaultValue={[light.angle]}
-                          min={1}
-                          max={90}
-                          step={1}
-                          onValueChange={(value) => onLightChange(light.id, { angle: value[0] })}
-                        />
-                      </div>
-                      <div>
-                        <label htmlFor={`penumbra-${light.id}`} className="block text-sm font-medium text-white">
-                          Penumbra
-                        </label>
-                        <Slider
-                          id={`penumbra-${light.id}`}
-                          defaultValue={[light.penumbra]}
-                          min={0}
-                          max={1}
-                          step={0.05}
-                          onValueChange={(value) => onLightChange(light.id, { penumbra: value[0] })}
-                        />
-                      </div>
-                    </div>
-                  </div>
+                    <AccordionContent>
+                      <LightSettings light={light} onLightChange={onLightChange} onFocus={onFocusLight} />
+                    </AccordionContent>
+                  </AccordionItem>
                 ))}
-              <Button variant="secondary" onClick={addLight}>
-                Add Light
-              </Button>
-            </div>
-          </AccordionContent>
-        </AccordionItem>
-        <AccordionItem value="environment">
-          <AccordionTrigger>Environment</AccordionTrigger>
-          <AccordionContent>
-            <div className="grid gap-2">
-              <div className="flex items-center justify-between">
-                <label htmlFor="environmentEnabled" className="text-sm font-medium leading-none">
-                  Environment Enabled
-                </label>
-                <Switch
-                  id="environmentEnabled"
-                  checked={environmentEnabled}
-                  onCheckedChange={onEnvironmentEnabledChange}
-                />
+              </Accordion>
+              <div className="flex justify-end pt-2">
+                <Button size="sm" className="text-xs h-6" onClick={addLight} disabled={lights.length >= 5}>
+                  <Plus className="w-3 h-3 mr-1" />
+                  Add Light
+                </Button>
               </div>
-              {environmentEnabled && (
+            </>
+          )}
+        </div>
+        <Separator className="bg-white/20" />
+        <div className="space-y-2">
+          <div className="flex items-center justify-between">
+            <h3 className="text-sm font-semibold">Environment</h3>
+            <Switch checked={environmentEnabled} onCheckedChange={onEnvironmentEnabledChange} />
+          </div>
+          {environmentEnabled && (
+            <div className="space-y-2">
+              <div className="flex items-center justify-between text-xs">
+                <label>Background</label>
+                <Select value={bgType} onValueChange={(v) => onBgTypeChange(v as any)}>
+                  <SelectTrigger className="w-1/2 h-6 text-xs bg-white/10 border-white/30">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="color">Color</SelectItem>
+                    <SelectItem value="gradient">Gradient</SelectItem>
+                    <SelectItem value="image">Image</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+              {bgType === "color" && (
+                <div className="flex items-center justify-between text-xs">
+                  <label>Color</label>
+                  <input
+                    type="color"
+                    value={bgColor1}
+                    onChange={(e) => onBgColor1Change(e.target.value)}
+                    className="w-6 h-6 p-0 bg-transparent border-none"
+                  />
+                </div>
+              )}
+              {bgType === "gradient" && (
                 <>
-                  <Select value={bgType} onValueChange={onBgTypeChange}>
-                    <SelectTrigger className="w-full">
-                      <SelectValue placeholder="Select background type" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="color">Color</SelectItem>
-                      <SelectItem value="gradient">Gradient</SelectItem>
-                      <SelectItem value="image">Image</SelectItem>
-                    </SelectContent>
-                  </Select>
-                  {bgType === "color" && (
-                    <>
-                      <label htmlFor="bgColor1" className="block text-sm font-medium text-white">
-                        Background Color
-                      </label>
-                      <Input
-                        type="color"
-                        id="bgColor1"
-                        value={bgColor1}
-                        onChange={(e) => onBgColor1Change(e.target.value)}
-                      />
-                    </>
-                  )}
-                  {bgType === "gradient" && (
-                    <>
-                      <label htmlFor="bgColor1" className="block text-sm font-medium text-white">
-                        Background Color 1
-                      </label>
-                      <Input
-                        type="color"
-                        id="bgColor1"
-                        value={bgColor1}
-                        onChange={(e) => onBgColor1Change(e.target.value)}
-                      />
-                      <label htmlFor="bgColor2" className="block text-sm font-medium text-white">
-                        Background Color 2
-                      </label>
-                      <Input
-                        type="color"
-                        id="bgColor2"
-                        value={bgColor2}
-                        onChange={(e) => onBgColor2Change(e.target.value)}
-                      />
-                    </>
-                  )}
-                  {bgType === "image" && (
-                    <>
-                      <label htmlFor="bgImage" className="block text-sm font-medium text-white">
-                        Background Image URL
-                      </label>
-                      <Input
-                        type="text"
-                        id="bgImage"
-                        value={bgImage || ""}
-                        onChange={(e) => onBgImageChange(e.target.value)}
-                      />
-                    </>
-                  )}
+                  <div className="flex items-center justify-between text-xs">
+                    <label>Top Color</label>
+                    <input
+                      type="color"
+                      value={bgColor1}
+                      onChange={(e) => onBgColor1Change(e.target.value)}
+                      className="w-6 h-6 p-0 bg-transparent border-none"
+                    />
+                  </div>
+                  <div className="flex items-center justify-between text-xs">
+                    <label>Bottom Color</label>
+                    <input
+                      type="color"
+                      value={bgColor2}
+                      onChange={(e) => onBgColor2Change(e.target.value)}
+                      className="w-6 h-6 p-0 bg-transparent border-none"
+                    />
+                  </div>
                 </>
               )}
+              {bgType === "image" && (
+                <div className="flex items-center justify-between text-xs">
+                  <label>Image</label>
+                  <Button size="sm" className="text-xs h-6" onClick={() => bgImageInputRef.current?.click()}>
+                    Upload
+                  </Button>
+                  <input
+                    type="file"
+                    ref={bgImageInputRef}
+                    className="hidden"
+                    accept="image/*"
+                    onChange={handleBgImageUpload}
+                  />
+                </div>
+              )}
             </div>
-          </AccordionContent>
-        </AccordionItem>
-      </Accordion>
-      <div className="flex justify-between mt-4">
-        <Button variant="secondary" onClick={onSaveView}>
-          Save Default View
+          )}
+        </div>
+      </div>
+    </div>
+  )
+}
+
+function BulkActionBar({
+  selectedCount,
+  onClear,
+  onDelete,
+  onMove,
+  onSetPublic,
+  onDownload,
+  allItems,
+  selectedIds,
+  allFolders,
+  currentFolderId,
+}: {
+  selectedCount: number
+  onClear: () => void
+  onDelete: () => void
+  onMove: (targetFolderId: string | null) => void
+  onSetPublic: (isPublic: boolean) => void
+  onDownload: () => void
+  allItems: GalleryItem[]
+  selectedIds: Set<string>
+  allFolders?: Folder[]
+  currentFolderId: string | null
+}) {
+  const selectedItems = allItems.filter((item) => selectedIds.has(item.id))
+  const canDownload = selectedItems.every((item) => item.type === "model")
+
+  return (
+    <div className="absolute bottom-0 left-0 right-0 bg-background border-t p-2 flex items-center justify-between z-20">
+      <div className="flex items-center gap-4">
+        <Button variant="ghost" size="icon" onClick={onClear}>
+          <X className="h-5 w-5" />
         </Button>
-        <Button variant="secondary" onClick={onResetView}>
-          Reset View
+        <span className="font-semibold">{selectedCount} selected</span>
+      </div>
+      <div className="flex items-center gap-2">
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild>
+            <Button variant="outline">
+              <FolderSymlink className="mr-2 h-4 w-4" /> Move
+            </Button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent>
+            <DropdownMenuItem onSelect={() => onMove(null)} disabled={currentFolderId === null}>
+              <FolderIcon className="mr-2 h-4 w-4" /> Assets (Root)
+            </DropdownMenuItem>
+            {allFolders
+              ?.filter((f) => f.id !== currentFolderId)
+              .map((folder) => (
+                <DropdownMenuItem key={folder.id} onSelect={() => onMove(folder.id)}>
+                  <FolderIcon className="mr-2 h-4 w-4" /> {folder.name}
+                </DropdownMenuItem>
+              ))}
+          </DropdownMenuContent>
+        </DropdownMenu>
+        <Button variant="outline" onClick={() => onSetPublic(true)}>
+          <Globe className="mr-2 h-4 w-4" /> Set Public
+        </Button>
+        <Button variant="outline" onClick={() => onSetPublic(false)}>
+          <Lock className="mr-2 h-4 w-4" /> Set Private
+        </Button>
+        {canDownload && (
+          <Button variant="outline" onClick={onDownload}>
+            <Download className="mr-2 h-4 w-4" /> Download
+          </Button>
+        )}
+        <Button variant="destructive" onClick={onDelete}>
+          <Trash2 className="mr-2 h-4 w-4" /> Delete
         </Button>
       </div>
     </div>
