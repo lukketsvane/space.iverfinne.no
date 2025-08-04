@@ -21,7 +21,7 @@ import type React from "react"
 import { useState, useRef, useEffect, Suspense, useCallback, Fragment } from "react"
 import { useRouter, useSearchParams } from "next/navigation"
 import { Canvas, useFrame } from "@react-three/fiber"
-import { useGLTF, OrbitControls, Html, useProgress, SpotLight } from "@react-three/drei"
+import { useGLTF, OrbitControls, Html, useProgress, SpotLight, useHelper } from "@react-three/drei"
 import {
   Upload,
   FolderIcon,
@@ -152,34 +152,21 @@ function SpotLightInScene({
 }) {
   const spotLightRef = useRef<THREE.SpotLight>(null!)
   const target = useRef(new THREE.Object3D())
-  const spotLightHelper = useRef<THREE.SpotLightHelper>()
+
+  // Use the useHelper hook to show a helper for the selected light
+  useHelper(isSelected ? spotLightRef : null, THREE.SpotLightHelper, "yellow")
 
   useFrame(() => {
+    // Ensure the light always points to its target
     target.current.position.set(...light.targetPosition)
-    if (spotLightHelper.current) {
-      spotLightHelper.current.update()
+    if (spotLightRef.current) {
+      spotLightRef.current.target = target.current
     }
   })
 
-  const lightColor = new THREE.Color(
-    kelvinToRgb(light.kelvin).r,
-    kelvinToRgb(light.kelvin).g,
-    kelvinToRgb(light.kelvin).b,
-  )
-
-  useEffect(() => {
-    if (isSelected && spotLightRef.current) {
-      spotLightHelper.current = new THREE.SpotLightHelper(spotLightRef.current, lightColor.getHex())
-      spotLightHelper.current.update()
-    } else {
-      spotLightHelper.current?.dispose()
-      spotLightHelper.current = undefined
-    }
-    return () => {
-      spotLightHelper.current?.dispose()
-      spotLightHelper.current = undefined
-    }
-  }, [isSelected, lightColor])
+  // Convert Kelvin temperature to an RGB color
+  const { r, g, b } = kelvinToRgb(light.kelvin)
+  const lightColor = new THREE.Color(r, g, b)
 
   if (!light.visible) return null
 
@@ -197,7 +184,7 @@ function SpotLightInScene({
         castShadow
       />
       <primitive object={target.current} />
-      {isSelected && spotLightHelper.current && <primitive object={spotLightHelper.current.light} />}
+      {/* The clickable sphere representing the light source */}
       <mesh position={light.position} onClick={onSelect} onPointerOver={(e) => e.stopPropagation()}>
         <sphereGeometry args={[0.2, 16, 16]} />
         <meshBasicMaterial color={isSelected ? "yellow" : lightColor} wireframe />
@@ -303,14 +290,19 @@ function GalleryPage() {
         visible: true,
       })) ?? []
 
-    if (settings) {
-      setLights(settings.lights.map((l, i) => ({ ...l, id: Date.now() + i, visible: true })))
+    if (settings && settings.lights) {
+      const newLights = settings.lights.map((l, i) => ({
+        ...l,
+        id: Date.now() + i,
+        visible: true, // Lights from settings are visible by default
+      }))
+      setLights(newLights)
       setLightsEnabled(settings.lightsEnabled)
       setEnvironmentEnabled(settings.environmentEnabled)
       setBgType(settings.bgType)
       setBgColor1(settings.bgColor1)
       setBgColor2(settings.bgColor2)
-      setSelectedLightId(settings.lights[0] ? Date.now() : null)
+      setSelectedLightId(newLights[0]?.id ?? null)
     } else {
       setLights(defaultLights)
       setLightsEnabled(true)
@@ -627,18 +619,19 @@ function GalleryPage() {
     }
   }, [isDraggingPanel])
 
-  const backgroundStyle = {
-    background:
-      environmentEnabled && bgType === "gradient"
-        ? `linear-gradient(to bottom, ${bgColor1}, ${bgColor2})`
-        : environmentEnabled && bgType === "image"
-          ? `url(${bgImage})`
-          : environmentEnabled
-            ? bgColor1
-            : "#000000",
-    backgroundImage: environmentEnabled && bgType === "image" ? `url(${bgImage})` : "",
-    backgroundSize: bgType === "image" ? "cover" : "",
-    backgroundPosition: bgType === "image" ? "center" : "",
+  const backgroundStyle: React.CSSProperties = {}
+  if (environmentEnabled) {
+    if (bgType === "gradient") {
+      backgroundStyle.background = `linear-gradient(to bottom, ${bgColor1}, ${bgColor2})`
+    } else if (bgType === "image" && bgImage) {
+      backgroundStyle.backgroundImage = `url(${bgImage})`
+      backgroundStyle.backgroundSize = "cover"
+      backgroundStyle.backgroundPosition = "center"
+    } else {
+      backgroundStyle.backgroundColor = bgColor1
+    }
+  } else {
+    backgroundStyle.backgroundColor = "#000000"
   }
 
   const cycleLightPreset = useCallback(() => {
@@ -1159,7 +1152,11 @@ export default function HomePage() {
 }
 
 // --- UI Components (Menu, Dialogs, SettingsPanel) ---
-const MoveToSubMenuContent = ({ onMove, allFolders, currentItem }: Omit<MenuItemsProps, "onRename" | "onDelete">) => (
+const MoveToSubMenuContent = ({
+  onMove,
+  allFolders,
+  currentItem,
+}: Omit<MenuItemsProps, "onRename" | "onDelete" | "onSetPublic">) => (
   <>
     {currentItem.parent_id !== null && (
       <ContextMenuItem onSelect={() => onMove(null)}>
@@ -1182,7 +1179,7 @@ const MoveToDropdownSubMenuContent = ({
   onMove,
   allFolders,
   currentItem,
-}: Omit<MenuItemsProps, "onRename" | "onDelete">) => (
+}: Omit<MenuItemsProps, "onRename" | "onDelete" | "onSetPublic">) => (
   <>
     {currentItem.parent_id !== null && (
       <DropdownMenuItem onSelect={() => onMove(null)}>
