@@ -123,6 +123,10 @@ import type { Model, Folder, Light, ViewSettings, GalleryContents, GalleryItem }
 
 const Toaster = dynamic(() => import("sonner").then((mod) => mod.Toaster), { ssr: false })
 
+// Configure the GLTF loader to use the Draco decoder from the official CDN
+// This is crucial for loading models that use Draco compression.
+useGLTF.setDecoderPath("https://www.gstatic.com/draco/v1/decoders/")
+
 // --- Data Fetching ---
 const fetcher = (url: string) => fetch(url).then((res) => res.json())
 

@@ -1,6 +1,7 @@
-"use client";
+"use client"
 import { LoaderIcon } from "lucide-react"
 import { Suspense } from "react"
+import dynamic from "next/dynamic"
 
 const GalleryPageWithNoSSR = dynamic(() => import("@/components/gallery-page"), {
   ssr: false,
