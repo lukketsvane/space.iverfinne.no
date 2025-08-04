@@ -56,7 +56,7 @@ const ListView = ({
                 <img
                   src={model.thumbnail_url || `/placeholder.svg?width=400&height=400&query=${model.name}`}
                   alt={model.name}
-                  className="w-full h-full object-cover rounded-lg bg-gray-900 transition-transform duration-300 group-hover:scale-105"
+                  className="w-full h-full object-cover rounded-lg bg-black transition-transform duration-300 group-hover:scale-105"
                   loading="lazy"
                 />
                 <div className="absolute inset-0 bg-gradient-to-t from-black/70 to-transparent opacity-0 group-hover:opacity-100 transition-opacity duration-300 rounded-lg" />
@@ -88,7 +88,7 @@ const GridView = ({ models }: { models: Model[] }) => {
         <img
           src={model.thumbnail_url || `/placeholder.svg?width=400&height=400&query=${model.name}`}
           alt={model.name}
-          className={`w-full h-full object-cover rounded-md bg-gray-900 transition-all duration-300 ${isMoving ? "scale-95 shadow-2xl" : "scale-100 shadow-md group-hover:scale-105"}`}
+          className={`w-full h-full object-cover rounded-md bg-black transition-all duration-300 ${isMoving ? "scale-95 shadow-2xl" : "scale-100 shadow-md group-hover:scale-105"}`}
           loading="lazy"
         />
       </Link>
