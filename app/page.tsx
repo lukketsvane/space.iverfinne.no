@@ -14,6 +14,7 @@ import { Textarea } from "@/components/ui/textarea"
 import { Slider } from "@/components/ui/slider"
 import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from "@/components/ui/accordion"
 import { Switch } from "@/components/ui/switch"
+import { Checkbox } from "@/components/ui/checkbox"
 
 import type React from "react"
 
@@ -43,6 +44,11 @@ import {
   Eye,
   EyeOff,
   CopyIcon as Clone,
+  Globe,
+  Lock,
+  Save,
+  RotateCcw,
+  X,
 } from "lucide-react"
 import { upload } from "@vercel/blob/client"
 import useSWR, { useSWRConfig } from "swr"
@@ -86,43 +92,9 @@ import {
   SidebarTrigger,
 } from "@/components/ui/sidebar"
 import { Separator } from "@/components/ui/separator"
-import { kelvinToRgb } from "@/lib/utils"
-
-// --- Type Definitions ---
-interface Model {
-  id: string
-  name: string
-  model_url: string
-  thumbnail_url: string
-  created_at: string
-  folder_id: string | null
-}
-
-interface Folder {
-  id: string
-  name: string
-  parent_id: string | null
-  created_at: string
-  description?: string
-}
-
-interface GalleryContents {
-  folders: Folder[]
-  models: Model[]
-  currentFolder: Folder | null
-}
-
-interface Light {
-  id: number
-  visible: boolean
-  position: [number, number, number]
-  targetPosition: [number, number, number]
-  intensity: number
-  kelvin: number
-  decay: number
-  angle: number // in degrees
-  penumbra: number // 0-1
-}
+import { kelvinToRgb, cn } from "@/lib/utils"
+import { lightingPresets } from "@/lib/lighting-presets"
+import type { Model, Folder, Light, ViewSettings, GalleryContents, GalleryItem } from "@/types"
 
 // --- Data Fetching ---
 const fetcher = (url: string) => fetch(url).then((res) => res.json())
@@ -246,25 +218,44 @@ function GalleryPage() {
   const [breadcrumbs, setBreadcrumbs] = useState<{ id: string | null; name: string }[]>([{ id: null, name: "Assets" }])
   const [searchQuery, setSearchQuery] = useState("")
   const [sortOption, setSortOption] = useState("created_at-desc")
+  const [selectedItems, setSelectedItems] = useState<Set<string>>(new Set())
+  const lastSelectedItem = useRef<string | null>(null)
 
   const [sortBy, sortOrder] = sortOption.split("-")
   const galleryUrl = `/api/gallery?folderId=${currentFolderId || ""}&sortBy=${sortBy}&sortOrder=${sortOrder}`
   const { data: gallery, error, isLoading } = useSWR<GalleryContents>(galleryUrl, fetcher)
   const { data: allFolders } = useSWR<Folder[]>("/api/folders/all", fetcher)
-  const { data: selectedModel } = useSWR<Model>(modelId ? `/api/models/${modelId}` : null, fetcher)
+  const { data: selectedModel, mutate: mutateSelectedModel } = useSWR<Model>(
+    modelId ? `/api/models/${modelId}` : null,
+    fetcher,
+  )
   const { data: breadcrumbData, error: breadcrumbError } = useSWR<{ id: string; name: string }[]>(
     currentFolderId ? `/api/folders/${currentFolderId}/breadcrumbs` : null,
     fetcher,
   )
 
+  const galleryItems: GalleryItem[] = [
+    ...(gallery?.folders.map((f) => ({ ...f, type: "folder" })) ?? []),
+    ...(gallery?.models.map((m) => ({ ...m, type: "model" })) ?? []),
+  ]
+
+  const filteredItems = galleryItems.filter((item) => {
+    const nameMatch = item.name.toLowerCase().includes(searchQuery.toLowerCase())
+    if (searchQuery && item.type === "model") {
+      const folderDescriptionMatch = gallery?.currentFolder?.description
+        ?.toLowerCase()
+        .includes(searchQuery.toLowerCase())
+      return nameMatch || folderDescriptionMatch
+    }
+    return nameMatch
+  })
+
   useEffect(() => {
     if (breadcrumbError) {
       console.error("Failed to load breadcrumbs:", breadcrumbError)
       toast.error(
-        "Could not load folder path. Your database schema might be out of date. Try running `npm run db:push`.",
-        {
-          duration: 10000,
-        },
+        "Could not load folder path. Your database schema might be out of date. Please run the latest SQL migration script.",
+        { duration: 10000 },
       )
     }
 
@@ -278,7 +269,7 @@ function GalleryPage() {
 
   const [uploadingFiles, setUploadingFiles] = useState<{ name: string; progress: number }[]>([])
   const [isNewFolderDialogOpen, setIsNewFolderDialogOpen] = useState(false)
-  const [renameItem, setRenameItem] = useState<{ id: string; name: string; type: "folder" | "model" } | null>(null)
+  const [renameItem, setRenameItem] = useState<GalleryItem | null>(null)
   const [editingFolder, setEditingFolder] = useState<Folder | null>(null)
 
   // Viewer settings state
@@ -291,42 +282,9 @@ function GalleryPage() {
   const [bgColor1, setBgColor1] = useState("#000000")
   const [bgColor2, setBgColor2] = useState("#1a1a1a")
   const [bgImage, setBgImage] = useState<string | null>(null)
-  const [lights, setLights] = useState<Light[]>([
-    {
-      id: Date.now() + 1,
-      visible: true,
-      position: [5, 5, 5],
-      targetPosition: [0, 0, 0],
-      intensity: 10.0,
-      kelvin: 6500,
-      decay: 2,
-      angle: 30,
-      penumbra: 0.2,
-    },
-    {
-      id: Date.now() + 2,
-      visible: true,
-      position: [-5, 5, 5],
-      targetPosition: [0, 0, 0],
-      intensity: 10.0,
-      kelvin: 9600,
-      decay: 2,
-      angle: 30,
-      penumbra: 0.2,
-    },
-    {
-      id: Date.now() + 3,
-      visible: true,
-      position: [0, 5, -5],
-      targetPosition: [0, 0, 0],
-      intensity: 9.1,
-      kelvin: 2600,
-      decay: 2,
-      angle: 30,
-      penumbra: 0.2,
-    },
-  ])
-  const [selectedLightId, setSelectedLightId] = useState<number | null>(lights[0].id)
+  const [lights, setLights] = useState<Light[]>([])
+  const [selectedLightId, setSelectedLightId] = useState<number | null>(null)
+  const [currentPresetIndex, setCurrentPresetIndex] = useState(-1)
 
   const [panelPosition, setPanelPosition] = useState({ x: 0, y: 0 })
   const [isDraggingPanel, setIsDraggingPanel] = useState(false)
@@ -336,20 +294,38 @@ function GalleryPage() {
   const [isOrbitControlsEnabled, setIsOrbitControlsEnabled] = useState(true)
   const [isShiftDown, setIsShiftDown] = useState(false)
 
-  const filteredFolders =
-    gallery?.folders?.filter((folder) => folder.name.toLowerCase().includes(searchQuery.toLowerCase())) ?? []
+  const resetViewSettings = useCallback((settings: ViewSettings | null | undefined) => {
+    const preset = lightingPresets[0]
+    const defaultLights =
+      preset?.lights.map((p, i) => ({
+        ...p,
+        id: Date.now() + i,
+        visible: true,
+      })) ?? []
 
-  const folderDescription = gallery?.currentFolder?.description?.toLowerCase() || ""
+    if (settings) {
+      setLights(settings.lights.map((l, i) => ({ ...l, id: Date.now() + i, visible: true })))
+      setLightsEnabled(settings.lightsEnabled)
+      setEnvironmentEnabled(settings.environmentEnabled)
+      setBgType(settings.bgType)
+      setBgColor1(settings.bgColor1)
+      setBgColor2(settings.bgColor2)
+      setSelectedLightId(settings.lights[0] ? Date.now() : null)
+    } else {
+      setLights(defaultLights)
+      setLightsEnabled(true)
+      setEnvironmentEnabled(true)
+      setBgType("color")
+      setBgColor1("#000000")
+      setBgColor2("#1a1a1a")
+      setSelectedLightId(defaultLights[0]?.id ?? null)
+    }
+    setCurrentPresetIndex(0)
+  }, [])
 
-  const filteredModels = gallery?.models
-    ? !searchQuery
-      ? gallery.models
-      : gallery.models.filter((model) => {
-          const modelNameMatch = model.name.toLowerCase().includes(searchQuery.toLowerCase())
-          const folderDescriptionMatch = folderDescription.includes(searchQuery.toLowerCase())
-          return modelNameMatch || folderDescriptionMatch
-        })
-    : []
+  useEffect(() => {
+    resetViewSettings(selectedModel?.view_settings)
+  }, [selectedModel, resetViewSettings])
 
   // --- Navigation and Actions ---
   const updateQuery = (newParams: Record<string, string | null>) => {
@@ -364,10 +340,47 @@ function GalleryPage() {
     router.push(`?${query.toString()}`)
   }
 
-  const handleNavigateToFolder = (folderId: string) => updateQuery({ folderId, modelId: null })
-  const handleBreadcrumbClick = (folderId: string | null) => updateQuery({ folderId, modelId: null })
+  const handleNavigateToFolder = (folderId: string) => {
+    updateQuery({ folderId, modelId: null })
+    setSelectedItems(new Set())
+  }
+  const handleBreadcrumbClick = (folderId: string | null) => {
+    updateQuery({ folderId, modelId: null })
+    setSelectedItems(new Set())
+  }
   const handleModelClick = (model: Model) => updateQuery({ modelId: model.id })
   const handleCloseViewer = () => updateQuery({ modelId: null })
+
+  const handleItemClick = (e: React.MouseEvent, item: GalleryItem) => {
+    e.stopPropagation()
+    const newSelectedItems = new Set(selectedItems)
+
+    if (e.shiftKey && lastSelectedItem.current) {
+      const lastIndex = filteredItems.findIndex((i) => i.id === lastSelectedItem.current)
+      const currentIndex = filteredItems.findIndex((i) => i.id === item.id)
+      const start = Math.min(lastIndex, currentIndex)
+      const end = Math.max(lastIndex, currentIndex)
+      for (let i = start; i <= end; i++) {
+        newSelectedItems.add(filteredItems[i].id)
+      }
+    } else if (e.metaKey || e.ctrlKey) {
+      if (newSelectedItems.has(item.id)) {
+        newSelectedItems.delete(item.id)
+      } else {
+        newSelectedItems.add(item.id)
+      }
+    } else {
+      if (newSelectedItems.has(item.id) && newSelectedItems.size === 1) {
+        newSelectedItems.clear()
+      } else {
+        newSelectedItems.clear()
+        newSelectedItems.add(item.id)
+      }
+    }
+
+    setSelectedItems(newSelectedItems)
+    lastSelectedItem.current = item.id
+  }
 
   const handleUploadAction = async (files: FileList | null) => {
     if (!files || files.length === 0) return
@@ -428,22 +441,58 @@ function GalleryPage() {
     setRenameItem(null)
   }
 
-  const handleDeleteItem = async (item: { id: string; type: "folder" | "model" }) => {
-    const url = item.type === "folder" ? `/api/folders/${item.id}` : `/api/models/${item.id}`
-    const res = await fetch(url, { method: "DELETE" })
-    if (!res.ok) return toast.error(`Failed to delete: ${(await res.json()).error}`)
-    toast.success(`${item.type.charAt(0).toUpperCase() + item.type.slice(1)} deleted`)
-    if (item.type === "model" && item.id === modelId) handleCloseViewer()
+  const handleBulkDelete = async () => {
+    toast.info(`Deleting ${selectedItems.size} items...`)
+    const promises = Array.from(selectedItems).map((id) => {
+      const item = galleryItems.find((i) => i.id === id)
+      if (!item) return Promise.resolve()
+      const url = item.type === "folder" ? `/api/folders/${item.id}` : `/api/models/${item.id}`
+      return fetch(url, { method: "DELETE" })
+    })
+    await Promise.all(promises)
+    toast.success(`${selectedItems.size} items deleted.`)
+    if (selectedItems.has(modelId ?? "")) handleCloseViewer()
     mutate(galleryUrl)
+    setSelectedItems(new Set())
   }
 
-  const handleMoveItem = async (item: { id: string; type: "folder" | "model" }, targetFolderId: string | null) => {
-    const url = item.type === "folder" ? `/api/folders/${item.id}` : `/api/models/${item.id}`
-    const body = item.type === "folder" ? { parent_id: targetFolderId } : { folder_id: targetFolderId }
-    await fetch(url, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) })
-    toast.success("Item moved successfully")
-    if (item.type === "model" && item.id === modelId && targetFolderId !== currentFolderId) handleCloseViewer()
+  const handleBulkMove = async (targetFolderId: string | null) => {
+    toast.info(`Moving ${selectedItems.size} items...`)
+    const promises = Array.from(selectedItems).map((id) => {
+      const item = galleryItems.find((i) => i.id === id)
+      if (!item) return Promise.resolve()
+      const url = item.type === "folder" ? `/api/folders/${item.id}` : `/api/models/${item.id}`
+      const body = item.type === "folder" ? { parent_id: targetFolderId } : { folder_id: targetFolderId }
+      return fetch(url, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      })
+    })
+    await Promise.all(promises)
+    toast.success(`${selectedItems.size} items moved.`)
+    if (selectedItems.has(modelId ?? "") && targetFolderId !== currentFolderId) handleCloseViewer()
     mutate(galleryUrl)
+    setSelectedItems(new Set())
+  }
+
+  const handleBulkSetPublic = async (isPublic: boolean) => {
+    toast.info(`Updating ${selectedItems.size} items...`)
+    const promises = Array.from(selectedItems).map((id) => {
+      const item = galleryItems.find((i) => i.id === id)
+      if (!item) return Promise.resolve()
+      const url = item.type === "folder" ? `/api/folders/${item.id}` : `/api/models/${item.id}`
+      return fetch(url, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ is_public: isPublic }),
+      })
+    })
+    await Promise.all(promises)
+    toast.success(`${selectedItems.size} items set to ${isPublic ? "public" : "private"}.`)
+    mutate(galleryUrl)
+    if (selectedItems.has(modelId ?? "")) mutateSelectedModel()
+    setSelectedItems(new Set())
   }
 
   const handleModelUpdate = async (id: string, updates: Partial<Omit<Model, "id" | "created_at">>) => {
@@ -452,9 +501,22 @@ function GalleryPage() {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(updates),
     })
-    mutate(`/api/models/${id}`)
+    mutateSelectedModel()
     mutate(galleryUrl)
-    toast.success("Model updated successfully!")
+  }
+
+  const handleSaveViewSettings = async () => {
+    if (!selectedModel) return
+    const settingsToSave: ViewSettings = {
+      lights: lights.map(({ id, visible, ...rest }) => rest),
+      lightsEnabled,
+      environmentEnabled,
+      bgType,
+      bgColor1,
+      bgColor2,
+    }
+    await handleModelUpdate(selectedModel.id, { view_settings: settingsToSave })
+    toast.success("Default view saved!")
   }
 
   const handleThumbnailUpload = async (file: File) => {
@@ -469,27 +531,36 @@ function GalleryPage() {
     await handleModelUpdate(selectedModel.id, { thumbnail_url: newBlob.url })
   }
 
-  const handleDownloadModel = () => {
-    if (!selectedModel) return
-    const link = document.createElement("a")
-    link.href = selectedModel.model_url
-    link.download = `${selectedModel.name}.glb`
-    document.body.appendChild(link)
-    link.click()
-    document.body.removeChild(link)
+  const handleBulkDownload = () => {
+    const modelsToDownload = Array.from(selectedItems)
+      .map((id) => galleryItems.find((i) => i.id === id))
+      .filter((item): item is Model & { type: "model" } => !!item && item.type === "model")
+
+    if (modelsToDownload.length === 0) {
+      toast.error("No models selected for download.")
+      return
+    }
+
+    toast.info(`Downloading ${modelsToDownload.length} models...`)
+    modelsToDownload.forEach((model) => {
+      const link = document.createElement("a")
+      link.href = model.model_url
+      link.download = `${model.name}.glb`
+      document.body.appendChild(link)
+      link.click()
+      document.body.removeChild(link)
+    })
   }
 
   const handleSaveFolderDescription = async (description: string) => {
     if (!editingFolder) return
-
     await fetch(`/api/folders/${editingFolder.id}`, {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ description }),
     })
-
     toast.success("Folder description saved.")
-    mutate(galleryUrl) // Re-fetch gallery data
+    mutate(galleryUrl)
     setEditingFolder(null)
   }
 
@@ -570,35 +641,24 @@ function GalleryPage() {
     backgroundPosition: bgType === "image" ? "center" : "",
   }
 
-  const randomizeLights = useCallback(() => {
-    setLights((prevLights) =>
-      prevLights.map((light) => ({
-        ...light,
-        position: [(Math.random() - 0.5) * 20, Math.random() * 10, (Math.random() - 0.5) * 20],
-        targetPosition: [(Math.random() - 0.5) * 10, 0, (Math.random() - 0.5) * 10],
-        intensity: Math.random() * 20,
-        kelvin: Math.floor(Math.random() * 11000) + 1000,
-        decay: Math.random() * 2,
-        angle: Math.random() * 60 + 10,
-        penumbra: Math.random(),
-      })),
-    )
-    toast.success("Lighting randomized!")
-  }, [])
+  const cycleLightPreset = useCallback(() => {
+    const nextPresetIndex = (currentPresetIndex + 1) % lightingPresets.length
+    const preset = lightingPresets[nextPresetIndex]
+    setLights(preset.lights.map((p, i) => ({ ...p, id: Date.now() + i, visible: true })))
+    setCurrentPresetIndex(nextPresetIndex)
+    toast.success(`Lighting preset: ${preset.name}`)
+  }, [currentPresetIndex])
 
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
       if (event.key.toLowerCase() === "r" && modelId) {
         event.preventDefault()
-        randomizeLights()
+        cycleLightPreset()
       }
     }
-
     window.addEventListener("keydown", handleKeyDown)
-    return () => {
-      window.removeEventListener("keydown", handleKeyDown)
-    }
-  }, [modelId, randomizeLights])
+    return () => window.removeEventListener("keydown", handleKeyDown)
+  }, [modelId, cycleLightPreset])
 
   const handleLightChange = (id: number, newValues: Partial<Omit<Light, "id">>) => {
     setLights(lights.map((light) => (light.id === id ? { ...light, ...newValues } : light)))
@@ -610,10 +670,7 @@ function GalleryPage() {
   }
 
   const addLight = () => {
-    if (lights.length >= 5) {
-      toast.error("Maximum of 5 lights reached.")
-      return
-    }
+    if (lights.length >= 5) return toast.error("Maximum of 5 lights reached.")
     const newLight: Light = {
       id: Date.now(),
       visible: true,
@@ -632,9 +689,7 @@ function GalleryPage() {
   const removeLight = (id: number) => {
     if (lights.length > 1) {
       setLights(lights.filter((light) => light.id !== id))
-      if (selectedLightId === id) {
-        setSelectedLightId(lights.find((l) => l.id !== id)?.id || null)
-      }
+      if (selectedLightId === id) setSelectedLightId(lights.find((l) => l.id !== id)?.id || null)
     } else {
       toast.error("Cannot remove the last light.")
     }
@@ -645,10 +700,7 @@ function GalleryPage() {
   }
 
   const cloneLight = (id: number) => {
-    if (lights.length >= 5) {
-      toast.error("Maximum of 5 lights reached.")
-      return
-    }
+    if (lights.length >= 5) return toast.error("Maximum of 5 lights reached.")
     const lightToClone = lights.find((l) => l.id === id)
     if (lightToClone) {
       const newLight = {
@@ -729,7 +781,7 @@ function GalleryPage() {
             <SettingsPanel
               model={selectedModel}
               onUpdate={handleModelUpdate}
-              onDelete={() => handleDeleteItem({ id: selectedModel.id, type: "model" })}
+              onDelete={() => handleBulkDelete()}
               onThumbnailUpload={handleThumbnailUpload}
               lights={lights}
               onLightChange={handleLightChange}
@@ -751,6 +803,8 @@ function GalleryPage() {
               onBgColor2Change={setBgColor2}
               bgImage={bgImage}
               onBgImageChange={setBgImage}
+              onSaveView={handleSaveViewSettings}
+              onResetView={() => resetViewSettings(selectedModel.view_settings)}
             />
           )}
         </div>
@@ -780,7 +834,19 @@ function GalleryPage() {
             <div className="w-6 h-6 rounded-full bg-white" />
           </Button>
           <Separator orientation="vertical" className="h-6 bg-white/20 mx-1" />
-          <Button variant="ghost" size="icon" onClick={handleDownloadModel} className="text-white rounded-full">
+          <Button
+            variant="ghost"
+            size="icon"
+            onClick={() => {
+              const link = document.createElement("a")
+              link.href = selectedModel.model_url
+              link.download = `${selectedModel.name}.glb`
+              document.body.appendChild(link)
+              link.click()
+              document.body.removeChild(link)
+            }}
+            className="text-white rounded-full"
+          >
             <Download />
           </Button>
         </div>
@@ -896,6 +962,7 @@ function GalleryPage() {
           </header>
           <main
             className="relative flex-1 p-4 md:p-8 overflow-y-auto"
+            onClick={() => setSelectedItems(new Set())}
             onDragEnter={(e) => {
               e.preventDefault()
               setIsDragging(true)
@@ -935,7 +1002,7 @@ function GalleryPage() {
                   <p className="mt-2">Drag and drop files here or use the upload button.</p>
                 </div>
               )}
-            {!isLoading && searchQuery && filteredFolders.length === 0 && filteredModels.length === 0 && (
+            {!isLoading && searchQuery && filteredItems.length === 0 && (
               <div className="text-center text-muted-foreground flex flex-col items-center justify-center h-full pt-20">
                 <Search size={64} className="mb-4" />
                 <h2 className="text-2xl font-semibold">No results found</h2>
@@ -954,47 +1021,78 @@ function GalleryPage() {
                   <p className="text-xs text-center truncate w-full">{file.name}</p>
                 </div>
               ))}
-              {filteredFolders.map((folder) => (
+              {filteredItems.map((item) => (
                 <ItemContextMenu
-                  key={folder.id}
-                  onRename={() => setRenameItem({ ...folder, type: "folder" })}
-                  onDelete={() => handleDeleteItem({ id: folder.id, type: "folder" })}
-                  onMove={(targetFolderId) => handleMoveItem({ id: folder.id, type: "folder" }, targetFolderId)}
+                  key={item.id}
+                  item={item}
+                  onRename={() => setRenameItem(item)}
+                  onDelete={() => {
+                    setSelectedItems(new Set([item.id]))
+                    handleBulkDelete()
+                  }}
+                  onMove={(targetFolderId) => {
+                    setSelectedItems(new Set([item.id]))
+                    handleBulkMove(targetFolderId)
+                  }}
+                  onSetPublic={(isPublic) => {
+                    setSelectedItems(new Set([item.id]))
+                    handleBulkSetPublic(isPublic)
+                  }}
                   allFolders={allFolders}
-                  currentItem={{ id: folder.id, type: "folder", parent_id: folder.parent_id }}
                 >
                   <div
-                    onDoubleClick={() => handleNavigateToFolder(folder.id)}
-                    className="group relative aspect-square rounded-lg overflow-hidden cursor-pointer flex flex-col items-center justify-center bg-muted hover:bg-secondary transition-colors"
+                    onClick={(e) => handleItemClick(e, item)}
+                    onDoubleClick={() =>
+                      item.type === "folder" ? handleNavigateToFolder(item.id) : handleModelClick(item)
+                    }
+                    className={cn(
+                      "group relative aspect-square rounded-lg overflow-hidden cursor-pointer transition-all duration-200",
+                      selectedItems.has(item.id) ? "ring-2 ring-primary ring-offset-2 ring-offset-background" : "",
+                    )}
                   >
-                    <FolderIcon className="w-1/3 h-1/3 text-foreground/50" />
-                    <p className="text-sm font-semibold truncate mt-2 text-center w-full px-2">{folder.name}</p>
-                  </div>
-                </ItemContextMenu>
-              ))}
-              {filteredModels.map((model) => (
-                <ItemContextMenu
-                  key={model.id}
-                  onRename={() => setRenameItem({ ...model, type: "model" })}
-                  onDelete={() => handleDeleteItem({ id: model.id, type: "model" })}
-                  onMove={(targetFolderId) => handleMoveItem({ id: model.id, type: "model" }, targetFolderId)}
-                  allFolders={allFolders}
-                  currentItem={{ id: model.id, type: "model", parent_id: model.folder_id }}
-                >
-                  <div
-                    onClick={() => handleModelClick(model)}
-                    className="group relative aspect-square rounded-lg overflow-hidden cursor-pointer"
-                  >
-                    <img
-                      src={model.thumbnail_url || "/placeholder.svg"}
-                      alt={model.name}
-                      className="w-full h-full object-contain transition-transform duration-300 group-hover:scale-110 bg-muted"
-                      onError={(e) => {
-                        ;(e.target as HTMLImageElement).src = `/placeholder.svg?width=400&height=400&query=error`
-                      }}
-                    />
-                    <div className="absolute inset-0 bg-black/60 opacity-0 group-hover:opacity-100 transition-opacity duration-300 flex items-end p-2">
-                      <p className="text-sm font-semibold truncate text-white">{model.name}</p>
+                    {item.type === "folder" ? (
+                      <div className="w-full h-full flex flex-col items-center justify-center bg-muted hover:bg-secondary transition-colors">
+                        <FolderIcon className="w-1/3 h-1/3 text-foreground/50" />
+                        <p className="text-sm font-semibold truncate mt-2 text-center w-full px-2">{item.name}</p>
+                      </div>
+                    ) : (
+                      <>
+                        <img
+                          src={item.thumbnail_url || "/placeholder.svg"}
+                          alt={item.name}
+                          className="w-full h-full object-contain transition-transform duration-300 group-hover:scale-110 bg-muted"
+                          onError={(e) => {
+                            ;(e.target as HTMLImageElement).src = `/placeholder.svg?width=400&height=400&query=error`
+                          }}
+                        />
+                        <div className="absolute inset-0 bg-black/60 opacity-0 group-hover:opacity-100 transition-opacity duration-300 flex items-end p-2">
+                          <p className="text-sm font-semibold truncate text-white">{item.name}</p>
+                        </div>
+                      </>
+                    )}
+                    <div
+                      className={cn(
+                        "absolute top-2 left-2 transition-opacity",
+                        selectedItems.has(item.id) ? "opacity-100" : "opacity-0 group-hover:opacity-100",
+                      )}
+                    >
+                      <Checkbox
+                        checked={selectedItems.has(item.id)}
+                        onCheckedChange={(checked) => {
+                          const newSelectedItems = new Set(selectedItems)
+                          if (checked) newSelectedItems.add(item.id)
+                          else newSelectedItems.delete(item.id)
+                          setSelectedItems(newSelectedItems)
+                        }}
+                        className="bg-background/50 border-white/50 data-[state=checked]:bg-primary"
+                      />
+                    </div>
+                    <div className="absolute bottom-2 left-2">
+                      {item.is_public ? (
+                        <Globe className="h-4 w-4 text-white/70" />
+                      ) : (
+                        <Lock className="h-4 w-4 text-white/70" />
+                      )}
                     </div>
                   </div>
                 </ItemContextMenu>
@@ -1010,6 +1108,20 @@ function GalleryPage() {
               )}
             </div>
           </main>
+          {selectedItems.size > 0 && (
+            <BulkActionBar
+              selectedCount={selectedItems.size}
+              onClear={() => setSelectedItems(new Set())}
+              onDelete={handleBulkDelete}
+              onMove={handleBulkMove}
+              onSetPublic={handleBulkSetPublic}
+              onDownload={handleBulkDownload}
+              allItems={galleryItems}
+              selectedIds={selectedItems}
+              allFolders={allFolders}
+              currentFolderId={currentFolderId}
+            />
+          )}
         </SidebarInset>
       </SidebarProvider>
       <NewFolderDialog
@@ -1089,7 +1201,7 @@ const MoveToDropdownSubMenuContent = ({
   </>
 )
 
-const DropdownMenuItems = ({ onRename, onDelete, onMove, allFolders, currentItem }: MenuItemsProps) => (
+const DropdownMenuItems = ({ onRename, onDelete, onMove, onSetPublic, allFolders, currentItem }: MenuItemsProps) => (
   <>
     <DropdownMenuItem onSelect={onRename}>
       <Pencil className="mr-2 h-4 w-4" />
@@ -1106,6 +1218,10 @@ const DropdownMenuItems = ({ onRename, onDelete, onMove, allFolders, currentItem
         </DropdownMenuSubContent>
       </DropdownMenuPortal>
     </DropdownMenuSub>
+    <DropdownMenuItem onSelect={() => onSetPublic(!currentItem.is_public)}>
+      {currentItem.is_public ? <Lock className="mr-2 h-4 w-4" /> : <Globe className="mr-2 h-4 w-4" />}
+      <span>Make {currentItem.is_public ? "Private" : "Public"}</span>
+    </DropdownMenuItem>
     <DropdownMenuItem onSelect={onDelete} className="text-destructive focus:text-destructive">
       <Trash2 className="mr-2 h-4 w-4" />
       <span>Delete</span>
@@ -1113,7 +1229,7 @@ const DropdownMenuItems = ({ onRename, onDelete, onMove, allFolders, currentItem
   </>
 )
 
-const ContextMenuItems = ({ onRename, onDelete, onMove, allFolders, currentItem }: MenuItemsProps) => (
+const ContextMenuItems = ({ onRename, onDelete, onMove, onSetPublic, allFolders, currentItem }: MenuItemsProps) => (
   <>
     <ContextMenuItem onSelect={onRename}>
       <Pencil className="mr-2 h-4 w-4" />
@@ -1128,6 +1244,10 @@ const ContextMenuItems = ({ onRename, onDelete, onMove, allFolders, currentItem 
         <MoveToSubMenuContent onMove={onMove} allFolders={allFolders} currentItem={currentItem} />
       </ContextMenuSubContent>
     </ContextMenuSub>
+    <ContextMenuItem onSelect={() => onSetPublic(!currentItem.is_public)}>
+      {currentItem.is_public ? <Lock className="mr-2 h-4 w-4" /> : <Globe className="mr-2 h-4 w-4" />}
+      <span>Make {currentItem.is_public ? "Private" : "Public"}</span>
+    </ContextMenuItem>
     <ContextMenuItem onSelect={onDelete} className="text-destructive focus:text-destructive">
       <Trash2 className="mr-2 h-4 w-4" />
       <span>Delete</span>
@@ -1139,28 +1259,31 @@ interface MenuItemsProps {
   onRename: () => void
   onDelete: () => void
   onMove: (targetFolderId: string | null) => void
+  onSetPublic: (isPublic: boolean) => void
   allFolders?: Folder[]
-  currentItem: { id: string; type: "folder" | "model"; parent_id: string | null }
+  currentItem: GalleryItem
 }
 
 function ItemContextMenu({
   children,
+  item,
   onRename,
   onDelete,
   onMove,
+  onSetPublic,
   allFolders,
-  currentItem,
 }: {
   children: React.ReactNode
+  item: GalleryItem
   onRename: () => void
   onDelete: () => void
   onMove: (targetFolderId: string | null) => void
+  onSetPublic: (isPublic: boolean) => void
   allFolders?: Folder[]
-  currentItem: { id: string; type: "folder" | "model"; parent_id: string | null }
 }) {
   return (
     <ContextMenu>
-      <ContextMenuTrigger className="w-full h-full">
+      <ContextMenuTrigger className="w-full h-full" onContextMenu={(e) => e.stopPropagation()}>
         <div className="relative group w-full h-full">
           {children}
           <div className="absolute top-2 right-2">
@@ -1170,31 +1293,34 @@ function ItemContextMenu({
                   variant="ghost"
                   size="icon"
                   className="h-7 w-7 opacity-0 group-hover:opacity-100 focus-visible:opacity-100 bg-black/30 hover:bg-black/50 text-white hover:text-white"
+                  onClick={(e) => e.stopPropagation()}
                   onContextMenu={(e) => e.stopPropagation()}
                 >
                   <MoreVertical className="h-4 w-4" />
                 </Button>
               </DropdownMenuTrigger>
-              <DropdownMenuContent>
+              <DropdownMenuContent onClick={(e) => e.stopPropagation()}>
                 <DropdownMenuItems
                   onRename={onRename}
                   onDelete={onDelete}
                   onMove={onMove}
+                  onSetPublic={onSetPublic}
                   allFolders={allFolders}
-                  currentItem={currentItem}
+                  currentItem={item}
                 />
               </DropdownMenuContent>
             </DropdownMenu>
           </div>
         </div>
       </ContextMenuTrigger>
-      <ContextMenuContent>
+      <ContextMenuContent onClick={(e) => e.stopPropagation()}>
         <ContextMenuItems
           onRename={onRename}
           onDelete={onDelete}
           onMove={onMove}
+          onSetPublic={onSetPublic}
           allFolders={allFolders}
-          currentItem={currentItem}
+          currentItem={item}
         />
       </ContextMenuContent>
     </ContextMenu>
@@ -1239,7 +1365,7 @@ function RenameDialog({
   onOpenChange,
   onRename,
 }: {
-  item: { id: string; name: string; type: string }
+  item: GalleryItem
   onOpenChange: (open: boolean) => void
   onRename: (name: string) => void
 }) {
@@ -1556,6 +1682,8 @@ function SettingsPanel({
   onBgColor2Change,
   bgImage,
   onBgImageChange,
+  onSaveView,
+  onResetView,
 }: {
   model: Model
   onUpdate: (id: string, updates: Partial<Omit<Model, "id" | "created_at">>) => void
@@ -1581,6 +1709,8 @@ function SettingsPanel({
   onBgColor2Change: (value: string) => void
   bgImage: string | null
   onBgImageChange: (value: string | null) => void
+  onSaveView: () => void
+  onResetView: () => void
 }) {
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false)
   const thumbnailInputRef = useRef<HTMLInputElement>(null)
@@ -1607,6 +1737,18 @@ function SettingsPanel({
             <div className="w-1/2">
               <EditableValue value={model.name} onSave={(newName) => onUpdate(model.id, { name: newName })} />
             </div>
+          </div>
+          <div className="flex items-center justify-between text-xs">
+            <label>Visibility</label>
+            <Button
+              size="sm"
+              className="text-xs h-6 bg-transparent"
+              variant="outline"
+              onClick={() => onUpdate(model.id, { is_public: !model.is_public })}
+            >
+              {model.is_public ? <Globe className="h-3 w-3 mr-1" /> : <Lock className="h-3 w-3 mr-1" />}
+              {model.is_public ? "Public" : "Private"}
+            </Button>
           </div>
           <div className="flex items-center justify-between text-xs">
             <label>Thumbnail</label>
@@ -1645,6 +1787,20 @@ function SettingsPanel({
           </div>
         </div>
         <Separator className="bg-white/20" />
+        <div className="space-y-2">
+          <div className="flex items-center justify-between">
+            <h3 className="text-sm font-semibold">View Settings</h3>
+            <div className="flex items-center gap-2">
+              <Button variant="ghost" size="icon" className="h-6 w-6" onClick={onResetView}>
+                <RotateCcw className="h-4 w-4" />
+              </Button>
+              <Button variant="default" size="sm" className="text-xs h-6" onClick={onSaveView}>
+                <Save className="h-3 w-3 mr-1" />
+                Save View
+              </Button>
+            </div>
+          </div>
+        </div>
         <div className="space-y-2">
           <div className="flex items-center justify-between">
             <h3 className="text-sm font-semibold">Lights</h3>
@@ -1786,6 +1942,79 @@ function SettingsPanel({
             </div>
           )}
         </div>
+      </div>
+    </div>
+  )
+}
+
+function BulkActionBar({
+  selectedCount,
+  onClear,
+  onDelete,
+  onMove,
+  onSetPublic,
+  onDownload,
+  allItems,
+  selectedIds,
+  allFolders,
+  currentFolderId,
+}: {
+  selectedCount: number
+  onClear: () => void
+  onDelete: () => void
+  onMove: (targetFolderId: string | null) => void
+  onSetPublic: (isPublic: boolean) => void
+  onDownload: () => void
+  allItems: GalleryItem[]
+  selectedIds: Set<string>
+  allFolders?: Folder[]
+  currentFolderId: string | null
+}) {
+  const selectedItems = allItems.filter((item) => selectedIds.has(item.id))
+  const canDownload = selectedItems.every((item) => item.type === "model")
+
+  return (
+    <div className="absolute bottom-0 left-0 right-0 bg-background border-t p-2 flex items-center justify-between z-20">
+      <div className="flex items-center gap-4">
+        <Button variant="ghost" size="icon" onClick={onClear}>
+          <X className="h-5 w-5" />
+        </Button>
+        <span className="font-semibold">{selectedCount} selected</span>
+      </div>
+      <div className="flex items-center gap-2">
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild>
+            <Button variant="outline">
+              <FolderSymlink className="mr-2 h-4 w-4" /> Move
+            </Button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent>
+            <DropdownMenuItem onSelect={() => onMove(null)} disabled={currentFolderId === null}>
+              <FolderIcon className="mr-2 h-4 w-4" /> Assets (Root)
+            </DropdownMenuItem>
+            {allFolders
+              ?.filter((f) => f.id !== currentFolderId)
+              .map((folder) => (
+                <DropdownMenuItem key={folder.id} onSelect={() => onMove(folder.id)}>
+                  <FolderIcon className="mr-2 h-4 w-4" /> {folder.name}
+                </DropdownMenuItem>
+              ))}
+          </DropdownMenuContent>
+        </DropdownMenu>
+        <Button variant="outline" onClick={() => onSetPublic(true)}>
+          <Globe className="mr-2 h-4 w-4" /> Set Public
+        </Button>
+        <Button variant="outline" onClick={() => onSetPublic(false)}>
+          <Lock className="mr-2 h-4 w-4" /> Set Private
+        </Button>
+        {canDownload && (
+          <Button variant="outline" onClick={onDownload}>
+            <Download className="mr-2 h-4 w-4" /> Download
+          </Button>
+        )}
+        <Button variant="destructive" onClick={onDelete}>
+          <Trash2 className="mr-2 h-4 w-4" /> Delete
+        </Button>
       </div>
     </div>
   )

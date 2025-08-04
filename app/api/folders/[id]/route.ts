@@ -5,23 +5,17 @@ export const runtime = "nodejs"
 
 export async function PATCH(request: Request, { params }: { params: { id: string } }) {
   const { id } = params
-  const { name, description } = await request.json()
+  const body = await request.json()
 
-  if (!name && description === undefined) {
-    return NextResponse.json({ error: "Name or description is required" }, { status: 400 })
+  // Basic validation to prevent empty updates
+  if (Object.keys(body).length === 0) {
+    return NextResponse.json({ error: "Request body cannot be empty." }, { status: 400 })
   }
 
-  const updateData: { name?: string; description?: string } = {}
-  if (name) {
-    updateData.name = name
-  }
-  if (description !== undefined) {
-    updateData.description = description
-  }
-
-  const { data, error } = await supabase.from("folders").update(updateData).eq("id", id).select().single()
+  const { data, error } = await supabase.from("folders").update(body).eq("id", id).select().single()
 
   if (error) {
+    console.error("Error updating folder:", error)
     return NextResponse.json({ error: error.message }, { status: 500 })
   }
 
