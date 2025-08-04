@@ -123,8 +123,6 @@ import type { Model, Folder, Light, ViewSettings, GalleryContents, GalleryItem }
 
 const Toaster = dynamic(() => import("sonner").then((mod) => mod.Toaster), { ssr: false })
 
-// Configure the GLTF loader to use the Draco decoder from the official CDN
-// This is crucial for loading models that use Draco compression.
 useGLTF.setDecoderPath("https://www.gstatic.com/draco/v1/decoders/")
 
 // --- Data Fetching ---
@@ -546,37 +544,51 @@ function GalleryPage() {
     hasCaptured.current = false
   }, [modelId])
 
-  const handleModelUpdate = async (id: string, updates: Partial<Omit<Model, "id" | "created_at">>) => {
-    await fetch(`/api/models/${id}`, {
-      method: "PATCH",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(updates),
-    })
-    mutateSelectedModel()
-    mutate(galleryUrl)
-  }
+  const handleModelUpdate = useCallback(
+    async (id: string, updates: Partial<Omit<Model, "id" | "created_at">>) => {
+      await fetch(`/api/models/${id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(updates),
+      })
+      mutateSelectedModel()
+      mutate(galleryUrl)
+    },
+    [mutateSelectedModel, mutate, galleryUrl],
+  )
 
   const handleThumbnailUpload = useCallback(
     async (file: File) => {
       if (!selectedModel) return
-      toast.info(`Uploading thumbnail...`)
-      const pathname = `thumbnails/${selectedModel.id}.${file.name.split(".").pop()}`
-      const newBlob = await upload(pathname, file, {
-        access: "public",
-        handleUploadUrl: "/api/upload",
-        clientPayload: JSON.stringify({ isThumbnail: true }),
-      })
-      await handleModelUpdate(selectedModel.id, { thumbnail_url: newBlob.url })
+      try {
+        toast.info(`Uploading thumbnail...`)
+        const pathname = `thumbnails/${selectedModel.id}.${file.name.split(".").pop()}`
+        const newBlob = await upload(pathname, file, {
+          access: "public",
+          handleUploadUrl: "/api/upload",
+          clientPayload: JSON.stringify({ isThumbnail: true }),
+        })
+        await handleModelUpdate(selectedModel.id, { thumbnail_url: newBlob.url })
+        toast.success("Thumbnail updated successfully!")
+      } catch (error) {
+        console.error("Thumbnail upload failed:", error)
+        toast.error(error instanceof Error ? error.message : "Failed to upload thumbnail.")
+      }
     },
-    [selectedModel, mutateSelectedModel, mutate, galleryUrl],
+    [selectedModel, handleModelUpdate],
   )
 
   const handleCaptureThumbnail = useCallback(async () => {
     if (captureControllerRef.current) {
-      toast.info("Capturing thumbnail...")
-      const file = await captureControllerRef.current.capture()
-      if (file) {
-        await handleThumbnailUpload(file)
+      try {
+        toast.info("Capturing thumbnail...")
+        const file = await captureControllerRef.current.capture()
+        if (file) {
+          await handleThumbnailUpload(file)
+        }
+      } catch (error) {
+        console.error("Thumbnail capture failed:", error)
+        toast.error(error instanceof Error ? error.message : "Failed to capture thumbnail.")
       }
     }
   }, [handleThumbnailUpload])

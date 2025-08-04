@@ -6,11 +6,18 @@ export const runtime = "nodejs"
 export async function POST(request: Request): Promise<NextResponse> {
   const body = (await request.json()) as HandleUploadBody
 
+  if (!process.env.BLOB_READ_WRITE_TOKEN) {
+    return NextResponse.json(
+      { message: "The BLOB_READ_WRITE_TOKEN environment variable is not set." },
+      { status: 401 }, // 401 Unauthorized is more appropriate
+    )
+  }
+
   try {
     const jsonResponse = await handleUpload({
       body,
       request,
-      token: process.env.BLOB_READ_WRITE_TOKEN, // Required for server-side handling
+      token: process.env.BLOB_READ_WRITE_TOKEN,
       onBeforeGenerateToken: async (pathname, clientPayload) => {
         let payload: { isThumbnail?: boolean } = {}
         if (clientPayload) {
@@ -44,7 +51,7 @@ export async function POST(request: Request): Promise<NextResponse> {
 
     return NextResponse.json(jsonResponse)
   } catch (error) {
-    const errorMessage = error instanceof Error ? error.message : "Unknown error"
-    return NextResponse.json({ error: `Upload failed: ${errorMessage}` }, { status: 400 })
+    const message = error instanceof Error ? error.message : "Unknown error"
+    return NextResponse.json({ message: `Upload failed: ${message}` }, { status: 400 })
   }
 }
