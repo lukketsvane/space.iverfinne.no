@@ -7,10 +7,7 @@ export async function POST(request: Request): Promise<NextResponse> {
   const body = (await request.json()) as HandleUploadBody
 
   if (!process.env.BLOB_READ_WRITE_TOKEN) {
-    return NextResponse.json(
-      { message: "The BLOB_READ_WRITE_TOKEN environment variable is not set." },
-      { status: 401 }, // 401 Unauthorized is more appropriate
-    )
+    return NextResponse.json({ message: "The BLOB_READ_WRITE_TOKEN environment variable is not set." }, { status: 401 })
   }
 
   try {
