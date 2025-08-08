@@ -1,9 +1,9 @@
 "use client";
-import dynamic from "next/dynamic"
 import { LoaderIcon } from "lucide-react"
+import dynamic from "next/dynamic"
+import GalleryClientWrapper from "./gallery-client-wrapper"
 
-const GalleryPage = dynamic(() => import("@/components/gallery-page"), {
-  ssr: false,
+const GalleryPageWithNoSSR = dynamic(() => import("@/components/gallery-page"), {
   loading: () => (
     <div className="w-full h-screen flex items-center justify-center bg-black">
       <LoaderIcon className="w-12 h-12 animate-spin text-white" />
@@ -12,5 +12,5 @@ const GalleryPage = dynamic(() => import("@/components/gallery-page"), {
 })
 
 export default function HomePage() {
-  return <GalleryPage />
+  return <GalleryClientWrapper />
 }

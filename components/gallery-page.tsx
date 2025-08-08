@@ -118,9 +118,12 @@ import {
 } from "@/components/ui/sidebar"
 import { Separator } from "@/components/ui/separator"
 import { kelvinToRgb, cn } from "@/lib/utils"
+import { lightingPresets } from "@/lib/lighting-presets"
 import type { Model, Folder, Light, ViewSettings, GalleryContents, GalleryItem } from "@/types"
 
 const Toaster = dynamic(() => import("sonner").then((mod) => mod.Toaster), { ssr: false })
+
+useGLTF.setDecoderPath("https://www.gstatic.com/draco/v1/decoders/")
 
 // --- Data Fetching ---
 const fetcher = (url: string) => fetch(url).then((res) => res.json())
@@ -170,12 +173,16 @@ const ModelViewer = forwardRef<THREE.Group, { modelUrl: string; materialMode: "p
       scene.position.z -= center.z
       scene.position.y -= box.min.y
 
-      const grayPBRMaterial = new THREE.MeshStandardMaterial({
-        color: 0xcccccc,
-        roughness: 0.8,
-        metalness: 0.1,
-        side: THREE.DoubleSide,
-      })
+      // Create a single 1x1 white texture to be reused
+      const whiteTexture = new THREE.CanvasTexture(document.createElement("canvas"))
+      const context = (whiteTexture.image as HTMLCanvasElement).getContext("2d")
+      if (context) {
+        whiteTexture.image.width = 1
+        whiteTexture.image.height = 1
+        context.fillStyle = "white"
+        context.fillRect(0, 0, 1, 1)
+        whiteTexture.needsUpdate = true
+      }
 
       scene.traverse((child) => {
         if ((child as THREE.Mesh).isMesh) {
@@ -187,14 +194,22 @@ const ModelViewer = forwardRef<THREE.Group, { modelUrl: string; materialMode: "p
           // Store original material
           originalMaterials.current.set(mesh.uuid, mesh.material)
 
-          // Store a "white" PBR version of the material
+          // Create and store a "white" version of the material
+          const createWhiteVariant = (mat: THREE.Material): THREE.Material => {
+            if (mat instanceof THREE.MeshStandardMaterial) {
+              const whiteMat = mat.clone()
+              whiteMat.map = whiteTexture // Replace the albedo texture
+              whiteMat.color.set("white") // Set the base color to white
+              return whiteMat
+            }
+            // Fallback for any non-standard materials
+            return new THREE.MeshStandardMaterial({ color: "white", side: THREE.DoubleSide })
+          }
+
           if (Array.isArray(mesh.material)) {
-            whiteMaterials.current.set(
-              mesh.uuid,
-              mesh.material.map(() => grayPBRMaterial),
-            )
+            whiteMaterials.current.set(mesh.uuid, mesh.material.map(createWhiteVariant))
           } else {
-            whiteMaterials.current.set(mesh.uuid, grayPBRMaterial)
+            whiteMaterials.current.set(mesh.uuid, createWhiteVariant(mesh.material))
           }
         }
       })
@@ -434,11 +449,11 @@ function GalleryPage() {
   const [editingFolder, setEditingFolder] = useState<Folder | null>(null)
 
   // Viewer settings state
-  const [materialMode, setMaterialMode] = useState<"pbr" | "normal" | "white">("pbr")
+  const [materialMode, setMaterialMode] = useState<"pbr" | "normal" | "white">("white")
   const [isDragging, setIsDragging] = useState(false)
   const [isSettingsPanelOpen, setIsSettingsPanelOpen] = useState(true)
   const [lightsEnabled, setLightsEnabled] = useState(true)
-  const [environmentEnabled, setEnvironmentEnabled] = useState(false)
+  const [environmentEnabled, setEnvironmentEnabled] = useState(true)
   const [bloomEnabled, setBloomEnabled] = useState(true)
   const [bgType, setBgType] = useState<"color" | "gradient" | "image">("color")
   const [bgColor1, setBgColor1] = useState("#000000")
@@ -485,34 +500,43 @@ function GalleryPage() {
       },
     ]
 
-    const useSavedLights = settings?.lights && settings.lights.length > 0
-    if (useSavedLights) {
-      const newLights = settings.lights.map((l, i) => ({
-        ...l,
-        id: Date.now() + i,
-        visible: true,
-      }))
-      setLights(newLights)
+    if (settings) {
+      if (settings.lights) {
+        const newLights = settings.lights.map((l, i) => ({
+          ...l,
+          id: Date.now() + i,
+          visible: true,
+        }))
+        setLights(newLights)
+      } else {
+        setLights(defaultLights)
+      }
+
+      setLightsEnabled(settings.lightsEnabled ?? true)
+      setEnvironmentEnabled(settings.environmentEnabled ?? true)
+      setBloomEnabled(settings.bloomEnabled ?? true)
+      setBgType(settings.bgType ?? "color")
+      setBgColor1(settings.bgColor1 ?? "#000000")
+      setBgColor2(settings.bgColor2 ?? "#1a1a1a")
+      setFieldOfView(settings.fieldOfView ?? 50)
     } else {
       setLights(defaultLights)
+      setLightsEnabled(true)
+      setEnvironmentEnabled(true)
+      setBloomEnabled(true)
+      setBgType("color")
+      setBgColor1("#000000")
+      setBgColor2("#1a1a1a")
+      setFieldOfView(50)
     }
-
-    setLightsEnabled(settings?.lightsEnabled ?? true)
-    setEnvironmentEnabled(settings?.environmentEnabled ?? false)
-    setBloomEnabled(settings?.bloomEnabled ?? true)
-    setBgType(settings?.bgType ?? "color")
-    setBgColor1(settings?.bgColor1 ?? "#000000")
-    setBgColor2(settings?.bgColor2 ?? "#1a1a1a")
-    setFieldOfView(settings?.fieldOfView ?? 50)
-
     setSelectedLightId(null)
     setCurrentPresetIndex(-1)
   }, [])
 
   useEffect(() => {
-    // When the selected model changes, reset the view settings.
-    // This will apply saved settings or fall back to defaults.
-    resetViewSettings(selectedModel?.view_settings)
+    if (selectedModel?.view_settings) {
+      resetViewSettings(selectedModel.view_settings)
+    }
   }, [selectedModel, resetViewSettings])
 
   const hasCaptured = useRef(false)
@@ -520,37 +544,51 @@ function GalleryPage() {
     hasCaptured.current = false
   }, [modelId])
 
-  const handleModelUpdate = async (id: string, updates: Partial<Omit<Model, "id" | "created_at">>) => {
-    await fetch(`/api/models/${id}`, {
-      method: "PATCH",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(updates),
-    })
-    mutateSelectedModel()
-    mutate(galleryUrl)
-  }
+  const handleModelUpdate = useCallback(
+    async (id: string, updates: Partial<Omit<Model, "id" | "created_at">>) => {
+      await fetch(`/api/models/${id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(updates),
+      })
+      mutateSelectedModel()
+      mutate(galleryUrl)
+    },
+    [mutateSelectedModel, mutate, galleryUrl],
+  )
 
   const handleThumbnailUpload = useCallback(
     async (file: File) => {
       if (!selectedModel) return
-      toast.info(`Uploading thumbnail...`)
-      const pathname = `thumbnails/${selectedModel.id}.${file.name.split(".").pop()}`
-      const newBlob = await upload(pathname, file, {
-        access: "public",
-        handleUploadUrl: "/api/upload",
-        clientPayload: JSON.stringify({ isThumbnail: true }),
-      })
-      await handleModelUpdate(selectedModel.id, { thumbnail_url: newBlob.url })
+      try {
+        toast.info(`Uploading thumbnail...`)
+        const pathname = `thumbnails/${selectedModel.id}.${file.name.split(".").pop()}`
+        const newBlob = await upload(pathname, file, {
+          access: "public",
+          handleUploadUrl: "/api/upload",
+          clientPayload: JSON.stringify({ isThumbnail: true }),
+        })
+        await handleModelUpdate(selectedModel.id, { thumbnail_url: newBlob.url })
+        toast.success("Thumbnail updated successfully!")
+      } catch (error) {
+        console.error("Thumbnail upload failed:", error)
+        toast.error(error instanceof Error ? error.message : "Failed to upload thumbnail.")
+      }
     },
-    [selectedModel, mutateSelectedModel, mutate, galleryUrl],
+    [selectedModel, handleModelUpdate],
   )
 
   const handleCaptureThumbnail = useCallback(async () => {
     if (captureControllerRef.current) {
-      toast.info("Capturing thumbnail...")
-      const file = await captureControllerRef.current.capture()
-      if (file) {
-        await handleThumbnailUpload(file)
+      try {
+        toast.info("Capturing thumbnail...")
+        const file = await captureControllerRef.current.capture()
+        if (file) {
+          await handleThumbnailUpload(file)
+        }
+      } catch (error) {
+        console.error("Thumbnail capture failed:", error)
+        toast.error(error instanceof Error ? error.message : "Failed to capture thumbnail.")
       }
     }
   }, [handleThumbnailUpload])
@@ -888,41 +926,33 @@ function GalleryPage() {
     backgroundStyle.backgroundColor = "#000000"
   }
 
-  const randomizeLights = useCallback(() => {
-    const getRandomProps = () => ({
-      position: [(Math.random() - 0.5) * 10, Math.random() * 8 + 2, (Math.random() - 0.5) * 10] as [
-        number,
-        number,
-        number,
-      ],
-      intensity: Math.random() * 50 + 10,
-      kelvin: Math.random() * 10000 + 2000,
-      angle: Math.random() * 60 + 15,
-      penumbra: Math.random(),
-    })
+  const cycleLightPreset = useCallback(() => {
+    const nextPresetIndex = (currentPresetIndex + 1) % lightingPresets.length
+    const preset = lightingPresets[nextPresetIndex]
 
-    if (selectedLightId) {
-      // Randomize only the selected light
-      setLights((prevLights) => prevLights.map((l) => (l.id === selectedLightId ? { ...l, ...getRandomProps() } : l)))
-      toast.success("Randomized selected light!")
-    } else {
-      // Randomize all lights
-      setLights((prevLights) => prevLights.map((l) => ({ ...l, ...getRandomProps() })))
-      toast.success(`Randomized ${lights.length} lights!`)
-    }
-    setCurrentPresetIndex(-1) // Invalidate preset tracking
-  }, [lights, selectedLightId])
+    const scaledLights = preset.lights.map((p, i) => ({
+      ...p,
+      id: Date.now() + i,
+      visible: true,
+      position: [p.position[0] * 0.4, p.position[1] * 0.6, p.position[2] * 0.4] as [number, number, number],
+      intensity: Math.max(p.intensity * 1.5, 1),
+    }))
+
+    setLights(scaledLights)
+    setCurrentPresetIndex(nextPresetIndex)
+    toast.success(`Lighting preset: ${preset.name}`)
+  }, [currentPresetIndex])
 
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
       if (event.key.toLowerCase() === "r" && modelId) {
         event.preventDefault()
-        randomizeLights()
+        cycleLightPreset()
       }
     }
     window.addEventListener("keydown", handleKeyDown)
     return () => window.removeEventListener("keydown", handleKeyDown)
-  }, [modelId, randomizeLights])
+  }, [modelId, cycleLightPreset])
 
   const handleLightChange = (id: number, newValues: Partial<Omit<Light, "id">>) => {
     setLights(lights.map((light) => (light.id === id ? { ...light, ...newValues } : light)))
@@ -2395,3 +2425,5 @@ function BulkActionBar({
     </div>
   )
 }
+
+export default GalleryPage

@@ -15,11 +15,9 @@ export interface ViewSettings {
   lights: Omit<Light, "id" | "visible">[] // Don't save transient state
   lightsEnabled: boolean
   environmentEnabled: boolean
-  bloomEnabled: boolean
   bgType: "color" | "gradient" | "image"
   bgColor1: string
   bgColor2: string
-  fieldOfView: number
   // bgImage is omitted as saving large data URLs in JSONB is not ideal.
 }
 
