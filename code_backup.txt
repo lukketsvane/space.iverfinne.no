@@ -1,0 +1,2462 @@
+=== C:\Users\Shadow\Documents\GitHub\space.iverfinne.no\components\gallery-page.tsx ===
+
+"use client"
+
+import { Checkbox } from "@/components/ui/checkbox"
+
+import type React from "react"
+
+import { Bounds } from "@react-three/drei"
+import { Canvas } from "@react-three/fiber"
+import { Bloom, EffectComposer } from "@react-three/postprocessing"
+import { upload } from "@vercel/blob/client"
+import {
+  ChevronDown,
+  ChevronLeft,
+  ChevronRight,
+  Download,
+  FolderIcon,
+  FolderPlus,
+  Globe,
+  Grid,
+  Info,
+  ListFilter,
+  LoaderIcon,
+  Lock,
+  Palette,
+  Search,
+  Upload
+} from "lucide-react"
+import dynamic from "next/dynamic"
+import { useRouter, useSearchParams } from "next/navigation"
+import { Fragment, Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react"
+import { toast } from "sonner"
+import useSWR, { useSWRConfig } from "swr"
+import * as THREE from "three"
+import type { OrbitControls as OrbitControlsImpl } from "three-stdlib"
+
+import { Button } from "@/components/ui/button"
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuLabel,
+  DropdownMenuRadioGroup,
+  DropdownMenuRadioItem,
+  DropdownMenuTrigger
+} from "@/components/ui/dropdown-menu"
+import { Input } from "@/components/ui/input"
+import { Separator } from "@/components/ui/separator"
+import {
+  Sidebar,
+  SidebarContent,
+  SidebarHeader,
+  SidebarInset,
+  SidebarMenu,
+  SidebarMenuButton,
+  SidebarMenuItem,
+  SidebarProvider,
+  SidebarTrigger,
+} from "@/components/ui/sidebar"
+import { Skeleton } from "@/components/ui/skeleton"
+import { cn } from "@/lib/utils"
+import type { Folder, GalleryContents, GalleryItem, Light, Model, ViewSettings } from "@/types"
+
+import { BulkActionBar } from "@/components/gallery/bulk-action-bar"
+import { SettingsPanel } from "@/components/gallery/settings-panel"
+import { FolderDescriptionDialog, ItemContextMenu, NewFolderDialog, RenameDialog } from "@/components/gallery/ui-components"
+import { CaptureController, Loader, ModelViewer, SpotLightInScene } from "@/components/gallery/viewer-components"
+import { OrbitControls } from "@react-three/drei"
+
+const Toaster = dynamic(() => import("sonner").then((mod) => mod.Toaster), { ssr: false })
+
+import { useGLTF } from "@react-three/drei"
+useGLTF.setDecoderPath("https://www.gstatic.com/draco/v1/decoders/")
+
+// --- Data Fetching ---
+const fetcher = (url: string) => fetch(url).then((res) => res.json())
+
+function dataURLtoFile(dataurl: string, filename: string) {
+  const arr = dataurl.split(",")
+  const mimeMatch = arr[0].match(/:(.*?);/)
+  if (!mimeMatch) throw new Error("Invalid data URL")
+  const mime = mimeMatch[1]
+  const bstr = atob(arr[1])
+  const u8arr = new Uint8Array(bstr.length)
+  for (let n = 0; n < bstr.length; n++) u8arr[n] = bstr.charCodeAt(n)
+  return new File([u8arr], filename, { type: mime })
+}
+
+// --- Main Application Component ---
+function GalleryPage() {
+  const { mutate } = useSWRConfig()
+  const router = useRouter()
+  const searchParams = useSearchParams()
+
+  const modelId = searchParams.get("modelId")
+  const currentFolderId = searchParams.get("folderId") || null
+
+  const [breadcrumbs, setBreadcrumbs] = useState<{ id: string | null; name: string }[]>([{ id: null, name: "Assets" }])
+  const [searchQuery, setSearchQuery] = useState("")
+  const [sortOption, setSortOption] = useState("created_at-desc")
+  const [selectedItems, setSelectedItems] = useState<Set<string>>(new Set())
+  const lastSelectedItem = useRef<string | null>(null)
+
+  const [sortBy, sortOrder] = sortOption.split("-")
+  const galleryUrl = `/api/gallery?folderId=${currentFolderId || ""}&sortBy=${sortBy}&sortOrder=${sortOrder}`
+  const { data: gallery, error, isLoading } = useSWR<GalleryContents>(galleryUrl, fetcher)
+  const { data: allFolders } = useSWR<Folder[]>("/api/folders/all", fetcher)
+  const { data: selectedModel, mutate: mutateSelectedModel } = useSWR<Model>(modelId ? `/api/models/${modelId}` : null, fetcher)
+  const { data: breadcrumbData, error: breadcrumbError } = useSWR<{ id: string; name: string }[]>(
+    currentFolderId ? `/api/folders/${currentFolderId}/breadcrumbs` : null,
+    fetcher,
+  )
+
+  const galleryItems: GalleryItem[] = useMemo(
+    () => [
+      ...(gallery?.folders.map((f) => ({ ...f, type: "folder" as const })) ?? []),
+      ...(gallery?.models.map((m) => ({ ...m, type: "model" as const })) ?? []),
+    ],
+    [gallery],
+  )
+
+  const filteredItems = useMemo(() => {
+    const q = searchQuery.toLowerCase()
+    return galleryItems.filter((item) => {
+      const nameMatch = item.name.toLowerCase().includes(q)
+      if (searchQuery && item.type === "model") {
+        const folderDescriptionMatch = gallery?.currentFolder?.description?.toLowerCase().includes(q)
+        return nameMatch || folderDescriptionMatch
+      }
+      return nameMatch
+    })
+  }, [galleryItems, searchQuery, gallery?.currentFolder?.description])
+
+  useEffect(() => {
+    if (breadcrumbError) {
+      console.error("Failed to load breadcrumbs:", breadcrumbError)
+      toast.error("Could not load folder path.", { duration: 10000 })
+    }
+    if (currentFolderId === null) setBreadcrumbs([{ id: null, name: "Assets" }])
+    else if (breadcrumbData && Array.isArray(breadcrumbData)) setBreadcrumbs([{ id: null, name: "Assets" }, ...breadcrumbData])
+  }, [currentFolderId, breadcrumbData, breadcrumbError])
+
+  const [uploadingFiles, setUploadingFiles] = useState<{ name: string; progress: number }[]>([])
+  const [isNewFolderDialogOpen, setIsNewFolderDialogOpen] = useState(false)
+  const [renameItem, setRenameItem] = useState<GalleryItem | null>(null)
+  const [editingFolder, setEditingFolder] = useState<Folder | null>(null)
+
+  // Viewer state
+  const [materialMode, setMaterialMode] = useState<"pbr" | "normal" | "white">("white")
+  const [isDragging, setIsDragging] = useState(false)
+  const [isSettingsPanelOpen, setIsSettingsPanelOpen] = useState(true)
+  const [lightsEnabled, setLightsEnabled] = useState(true)
+  const [environmentEnabled, setEnvironmentEnabled] = useState(true)
+  const [bloomEnabled, setBloomEnabled] = useState(true)
+  const [bgType, setBgType] = useState<"color" | "gradient" | "image">("color")
+  const [bgColor1, setBgColor1] = useState("#000000")
+  const [bgColor2, setBgColor2] = useState("#1a1a1a")
+  const [bgImage, setBgImage] = useState<string | null>(null)
+  const [lights, setLights] = useState<Light[]>([])
+  const [selectedLightId, setSelectedLightId] = useState<number | null>(null)
+  const [fieldOfView, setFieldOfView] = useState(50)
+
+  // Refs and control state
+  const [panelPosition, setPanelPosition] = useState({ x: 0, y: 0 })
+  const [isDraggingPanel, setIsDraggingPanel] = useState(false)
+  const dragStartPos = useRef({ x: 0, y: 0 })
+  const panelRef = useRef<HTMLDivElement>(null)
+  const fileInputRef = useRef<HTMLInputElement>(null)
+  const [isOrbitControlsEnabled, setIsOrbitControlsEnabled] = useState(true)
+  const modelRef = useRef<THREE.Group>(null)
+  const captureControllerRef = useRef<{ capture: () => Promise<File | null> }>(null)
+  const orbitControlsRef = useRef<OrbitControlsImpl>(null)
+  const [boundsKey, setBoundsKey] = useState(0)
+  const [isLightDragging, setIsLightDragging] = useState(false)
+
+  const defaultLights: Light[] = useMemo(
+    () => [
+      { id: Date.now(), visible: true, position: [-2, 3, 2], targetPosition: [0, 0, 0], intensity: 3, kelvin: 5500, decay: 1, angle: 45, penumbra: 0.5, volumeOpacity: 0 },
+      { id: Date.now() + 1, visible: true, position: [2, 2, -1], targetPosition: [0, 0, 0], intensity: 2, kelvin: 4000, decay: 1, angle: 60, penumbra: 0.3, volumeOpacity: 0 },
+    ],
+    [],
+  )
+
+  const resetViewSettings = useCallback(
+    (settings: ViewSettings | null | undefined) => {
+      const newLights =
+        settings?.lights?.map((l, i) => ({ ...l, id: Date.now() + i, visible: true, volumeOpacity: l.volumeOpacity ?? 0 })) ??
+        defaultLights
+      setLights(newLights)
+      setLightsEnabled(settings?.lightsEnabled ?? true)
+      setEnvironmentEnabled(settings?.environmentEnabled ?? true)
+      setBloomEnabled(settings?.bloomEnabled ?? true)
+      setBgType(settings?.bgType ?? "color")
+      setBgColor1(settings?.bgColor1 ?? "#000000")
+      setBgColor2(settings?.bgColor2 ?? "#1a1a1a")
+      setBgImage(settings?.bgImage ?? null)
+      setFieldOfView(settings?.fieldOfView ?? 50)
+      setMaterialMode(settings?.materialMode ?? "white")
+      setSelectedLightId(null)
+    },
+    [defaultLights],
+  )
+
+  useEffect(() => {
+    if (selectedModel) {
+      resetViewSettings(selectedModel.view_settings)
+      if (orbitControlsRef.current && selectedModel.view_settings?.cameraPosition) {
+        orbitControlsRef.current.object.position.set(...selectedModel.view_settings.cameraPosition)
+        orbitControlsRef.current.target.set(...(selectedModel.view_settings.cameraTarget ?? [0, 0, 0]))
+        orbitControlsRef.current.update()
+      }
+    }
+  }, [selectedModel, resetViewSettings])
+
+  const hasCaptured = useRef(false)
+  useEffect(() => {
+    hasCaptured.current = false
+  }, [modelId])
+
+  const handleUnifyModel = useCallback(() => {
+    if (!modelRef.current) return toast.error("Model not ready for scaling.")
+    const scene = modelRef.current
+    const box = new THREE.Box3().setFromObject(scene)
+    const size = box.getSize(new THREE.Vector3())
+    const center = box.getCenter(new THREE.Vector3())
+    if (size.y === 0) return toast.error("Could not determine model height for scaling.")
+    const scaleFactor = 100 / size.y
+    scene.position.set(-center.x * scaleFactor, -box.min.y * scaleFactor, -center.z * scaleFactor)
+    scene.scale.set(scaleFactor, scaleFactor, scaleFactor)
+    setBoundsKey((prev) => prev + 1)
+    toast.success(`Model unified to 100mm height.`)
+  }, [])
+
+  const handleModelUpdate = useCallback(
+    async (id: string, updates: Partial<Omit<Model, "id" | "created_at">>) => {
+      await fetch(`/api/models/${id}`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify(updates) })
+      mutateSelectedModel()
+      mutate(galleryUrl)
+    },
+    [mutateSelectedModel, mutate, galleryUrl],
+  )
+
+  const handleThumbnailUpload = useCallback(
+    async (file: File) => {
+      if (!selectedModel) return
+      try {
+        toast.info(`Uploading thumbnail...`)
+        const pathname = `thumbnails/${selectedModel.id}.${file.name.split(".").pop()}`
+        const newBlob = await upload(pathname, file, { access: "public", handleUploadUrl: "/api/upload", clientPayload: JSON.stringify({ isThumbnail: true }) })
+        await handleModelUpdate(selectedModel.id, { thumbnail_url: newBlob.url })
+        toast.success("Thumbnail updated successfully!")
+      } catch (error) {
+        console.error("Thumbnail upload failed:", error)
+        toast.error(error instanceof Error ? error.message : "Failed to upload thumbnail.")
+      }
+    },
+    [selectedModel, handleModelUpdate],
+  )
+
+  const handleCaptureThumbnail = useCallback(async () => {
+    if (!captureControllerRef.current) return
+    try {
+      toast.info("Capturing thumbnail...")
+      const file = await captureControllerRef.current.capture()
+      if (file) {
+        await handleThumbnailUpload(file)
+      }
+    } catch (error) {
+      console.error("Thumbnail capture failed:", error)
+      toast.error(error instanceof Error ? error.message : "Failed to capture thumbnail.")
+    }
+  }, [handleThumbnailUpload])
+
+  useEffect(() => {
+    if (selectedModel && selectedModel.thumbnail_url.includes("/placeholder.svg") && !hasCaptured.current) {
+      const timer = setTimeout(() => {
+        if (captureControllerRef.current) {
+          handleCaptureThumbnail()
+          hasCaptured.current = true
+        }
+      }, 2500)
+      return () => clearTimeout(timer)
+    }
+  }, [selectedModel, handleCaptureThumbnail])
+
+  const updateQuery = (newParams: Record<string, string | null>) => {
+    const query = new URLSearchParams(searchParams.toString())
+    Object.entries(newParams).forEach(([key, value]) => {
+      if (value === null) query.delete(key)
+      else query.set(key, value)
+    })
+    router.push(`?${query.toString()}`)
+  }
+
+  const handleNavigateToFolder = (folderId: string) => {
+    updateQuery({ folderId, modelId: null })
+    setSelectedItems(new Set())
+  }
+  const handleBreadcrumbClick = (folderId: string | null) => {
+    updateQuery({ folderId, modelId: null })
+    setSelectedItems(new Set())
+  }
+  const handleModelClick = (model: Model) => updateQuery({ modelId: model.id })
+  const handleCloseViewer = () => updateQuery({ modelId: null })
+
+  const handleItemClick = (e: React.MouseEvent, item: GalleryItem) => {
+    e.stopPropagation()
+    const newSelectedItems = new Set(selectedItems)
+    if (e.shiftKey && lastSelectedItem.current) {
+      const lastIndex = filteredItems.findIndex((i) => i.id === lastSelectedItem.current)
+      const currentIndex = filteredItems.findIndex((i) => i.id === item.id)
+      const start = Math.min(lastIndex, currentIndex)
+      const end = Math.max(lastIndex, currentIndex)
+      for (let i = start; i <= end; i++) newSelectedItems.add(filteredItems[i].id)
+    } else if (e.metaKey || e.ctrlKey) {
+      newSelectedItems.has(item.id) ? newSelectedItems.delete(item.id) : newSelectedItems.add(item.id)
+    } else {
+      if (newSelectedItems.has(item.id) && newSelectedItems.size === 1) newSelectedItems.clear()
+      else {
+        newSelectedItems.clear()
+        newSelectedItems.add(item.id)
+      }
+    }
+    setSelectedItems(newSelectedItems)
+    lastSelectedItem.current = item.id
+  }
+
+  const handleUploadAction = async (files: FileList | null) => {
+    if (!files || files.length === 0) return
+    const fileArray = Array.from(files)
+    setUploadingFiles(fileArray.map((file) => ({ name: file.name, progress: 0 })))
+    const uploadedModels: Model[] = []
+    await Promise.all(
+      fileArray.map(async (file) => {
+        if (!file.name.endsWith(".glb")) {
+          toast.error(`Skipping non-GLB file: ${file.name}`)
+          return
+        }
+        try {
+          const newBlob = await upload(file.name.replace(/\s+/g, "_"), file, { access: "public", handleUploadUrl: "/api/upload" })
+          const res = await fetch("/api/models", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              name: file.name.replace(/\.glb$/, ""),
+              model_url: newBlob.url,
+              thumbnail_url: `/placeholder.svg?width=400&height=400&query=${encodeURIComponent(file.name.replace(/\.glb$/, ""))}`,
+              folder_id: currentFolderId,
+            }),
+          })
+          if (!res.ok) throw new Error("Failed to create model record")
+          const newModel = await res.json()
+          uploadedModels.push(newModel)
+          toast.success(`Uploaded ${file.name}`)
+        } catch {
+          toast.error(`Failed to upload ${file.name}`)
+        }
+      }),
+    )
+    mutate(galleryUrl)
+    setUploadingFiles([])
+    if (uploadedModels.length === 1) updateQuery({ modelId: uploadedModels[0].id })
+  }
+
+  const handleCreateFolder = async (name: string) => {
+    await fetch("/api/folders", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ name, parent_id: currentFolderId }) })
+    toast.success(`Folder "${name}" created`)
+    mutate(galleryUrl)
+    setIsNewFolderDialogOpen(false)
+  }
+
+  const handleRename = async (newName: string) => {
+    if (!renameItem) return
+    const url = renameItem.type === "folder" ? `/api/folders/${renameItem.id}` : `/api/models/${renameItem.id}`
+    await fetch(url, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ name: newName }) })
+    toast.success("Renamed successfully")
+    mutate(galleryUrl)
+    if (renameItem.type === "model") mutate(`/api/models/${renameItem.id}`)
+    setRenameItem(null)
+  }
+
+  const handleBulkDelete = async () => {
+    toast.info(`Deleting ${selectedItems.size} items...`)
+    const promises = Array.from(selectedItems).map((id) => {
+      const item = galleryItems.find((i) => i.id === id)
+      if (!item) return Promise.resolve()
+      const url = item.type === "folder" ? `/api/folders/${item.id}` : `/api/models/${item.id}`
+      return fetch(url, { method: "DELETE" })
+    })
+    await Promise.all(promises)
+    toast.success(`${selectedItems.size} items deleted.`)
+    if (Array.from(selectedItems).some((id) => id === modelId)) handleCloseViewer()
+    mutate(galleryUrl)
+    setSelectedItems(new Set())
+  }
+
+  const handleBulkMove = async (targetFolderId: string | null) => {
+    toast.info(`Moving ${selectedItems.size} items...`)
+    const promises = Array.from(selectedItems).map((id) => {
+      const item = galleryItems.find((i) => i.id === id)
+      if (!item) return Promise.resolve()
+      const url = item.type === "folder" ? `/api/folders/${item.id}` : `/api/models/${item.id}`
+      const body = item.type === "folder" ? { parent_id: targetFolderId } : { folder_id: targetFolderId }
+      return fetch(url, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) })
+    })
+    await Promise.all(promises)
+    toast.success(`${selectedItems.size} items moved.`)
+    if (Array.from(selectedItems).some((id) => id === modelId) && targetFolderId !== currentFolderId) handleCloseViewer()
+    mutate(galleryUrl)
+    setSelectedItems(new Set())
+  }
+
+  const handleBulkSetPublic = async (isPublic: boolean) => {
+    toast.info(`Updating ${selectedItems.size} items...`)
+    const promises = Array.from(selectedItems).map((id) => {
+      const item = galleryItems.find((i) => i.id === id)
+      if (!item) return Promise.resolve()
+      const url = item.type === "folder" ? `/api/folders/${item.id}` : `/api/models/${item.id}`
+      return fetch(url, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ is_public: isPublic }) })
+    })
+    await Promise.all(promises)
+    toast.success(`${selectedItems.size} items set to ${isPublic ? "public" : "private"}.`)
+    mutate(galleryUrl)
+    if (Array.from(selectedItems).some((id) => id === modelId)) mutateSelectedModel()
+    setSelectedItems(new Set())
+  }
+
+  const handleSaveViewSettings = async () => {
+    if (!selectedModel || !orbitControlsRef.current) return
+    const settingsToSave: ViewSettings = {
+      lights: lights.map(({ id, visible, ...rest }) => rest),
+      lightsEnabled,
+      environmentEnabled,
+      bloomEnabled,
+      ssaoEnabled: false,
+      bgType,
+      bgColor1,
+      bgColor2,
+      bgImage,
+      fieldOfView,
+      materialMode,
+      cameraPosition: orbitControlsRef.current.object.position.toArray() as [number, number, number],
+      cameraTarget: orbitControlsRef.current.target.toArray() as [number, number, number],
+    }
+    await handleModelUpdate(selectedModel.id, { view_settings: settingsToSave })
+    toast.success("Default view saved!")
+  }
+
+  const handleDeleteViewSettings = async () => {
+    if (!selectedModel) return
+    await handleModelUpdate(selectedModel.id, { view_settings: null })
+    resetViewSettings(null)
+    toast.success("Saved view has been deleted.")
+  }
+
+  const handleDeleteThumbnail = async () => {
+    if (!selectedModel) return
+    const placeholderUrl = `/placeholder.svg?width=400&height=400&query=${encodeURIComponent(selectedModel.name)}`
+    await handleModelUpdate(selectedModel.id, { thumbnail_url: placeholderUrl })
+    toast.success("Custom thumbnail has been deleted.")
+  }
+
+  const handleBulkDownload = () => {
+    const modelsToDownload = Array.from(selectedItems)
+      .map((id) => galleryItems.find((i) => i.id === id))
+      .filter((item): item is Model & { type: "model" } => !!item && item.type === "model")
+    if (modelsToDownload.length === 0) return toast.error("No models selected for download.")
+    toast.info(`Downloading ${modelsToDownload.length} models...`)
+    modelsToDownload.forEach((model) => {
+      const link = document.createElement("a")
+      link.href = model.model_url
+      link.download = `${model.name}.glb`
+      document.body.appendChild(link)
+      link.click()
+      document.body.removeChild(link)
+    })
+  }
+
+  const handleSaveFolderDescription = async (description: string) => {
+    if (!editingFolder) return
+    await fetch(`/api/folders/${editingFolder.id}`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ description }) })
+    toast.success("Folder description saved.")
+    mutate(galleryUrl)
+    setEditingFolder(null)
+  }
+
+  const randomizeSelectedLight = useCallback(() => {
+    if (selectedLightId === null) return toast.error("Select a light to randomize.")
+    const randomized = {
+      intensity: 5 + Math.random() * 20,
+      kelvin: 2500 + Math.random() * 7500,
+      angle: 20 + Math.random() * 40,
+      penumbra: Math.random() * 0.8,
+    }
+    handleLightChange(selectedLightId, randomized)
+    toast.success(`Light randomized!`)
+  }, [selectedLightId, lights])
+
+  useEffect(() => {
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (!modelId || document.activeElement instanceof HTMLInputElement || document.activeElement instanceof HTMLTextAreaElement) return
+      switch (event.key.toLowerCase()) {
+        case "1":
+          setMaterialMode("white")
+          break
+        case "2":
+          setMaterialMode("pbr")
+          break
+        case "3":
+          setMaterialMode("normal")
+          break
+        case "r":
+          event.preventDefault()
+          randomizeSelectedLight()
+          break
+        case "arrowright":
+        case "arrowleft": {
+          const models = gallery?.models ?? []
+          if (models.length === 0) return
+          const currentIndex = models.findIndex((m) => m.id === modelId)
+          if (currentIndex === -1) return
+          let nextIndex: number | null = null
+          if (event.key.toLowerCase() === "arrowright") nextIndex = (currentIndex + 1) % models.length
+          if (event.key.toLowerCase() === "arrowleft") nextIndex = (currentIndex - 1 + models.length) % models.length
+          if (nextIndex !== null) updateQuery({ modelId: models[nextIndex].id })
+          break
+        }
+      }
+    }
+    window.addEventListener("keydown", handleKeyDown)
+    return () => window.removeEventListener("keydown", handleKeyDown)
+  }, [modelId, gallery?.models, randomizeSelectedLight])
+
+  const handlePanelDragStart = (e: React.PointerEvent<HTMLDivElement>) => {
+    if ((e.target as HTMLElement).closest("button, input, [role=slider], a, [role=tab]")) return
+    e.preventDefault()
+    setIsDraggingPanel(true)
+    dragStartPos.current = { x: e.clientX - panelPosition.x, y: e.clientY - panelPosition.y }
+    document.body.style.cursor = "grabbing"
+    document.body.classList.add("select-none")
+  }
+
+  useEffect(() => {
+    const handlePanelDragMove = (e: PointerEvent) => {
+      if (!isDraggingPanel || !panelRef.current) return
+      let newX = e.clientX - dragStartPos.current.x
+      let newY = e.clientY - dragStartPos.current.y
+      const { offsetWidth, offsetHeight } = panelRef.current
+      const { innerWidth, innerHeight } = window
+      newX = Math.max(-(innerWidth - offsetWidth - 16), Math.min(16, newX))
+      newY = Math.max(-16, Math.min(innerHeight - offsetHeight - 16, newY))
+      setPanelPosition({ x: newX, y: newY })
+    }
+    const handlePanelDragEnd = () => {
+      setIsDraggingPanel(false)
+      document.body.style.cursor = "auto"
+      document.body.classList.remove("select-none")
+    }
+    if (isDraggingPanel) {
+      window.addEventListener("pointermove", handlePanelDragMove)
+      window.addEventListener("pointerup", handlePanelDragEnd)
+    }
+    return () => {
+      window.removeEventListener("pointermove", handlePanelDragMove)
+      window.removeEventListener("pointerup", handlePanelDragEnd)
+    }
+  }, [isDraggingPanel])
+
+  const backgroundStyle: React.CSSProperties = useMemo(() => {
+    if (!environmentEnabled) return { backgroundColor: "#000000" }
+    if (bgType === "gradient") return { background: `linear-gradient(to bottom, ${bgColor1}, ${bgColor2})` }
+    if (bgType === "image" && bgImage) return { backgroundImage: `url(${bgImage})`, backgroundSize: "cover", backgroundPosition: "center" }
+    return { backgroundColor: bgColor1 }
+  }, [environmentEnabled, bgType, bgColor1, bgColor2, bgImage])
+
+  const handleLightChange = (id: number, newValues: Partial<Omit<Light, "id">>) => {
+    setLights(lights.map((light) => (light.id === id ? { ...light, ...newValues } : light)))
+  }
+  const addLight = () => {
+    if (lights.length >= 5) return toast.error("Maximum of 5 lights reached.")
+    const newLight: Light = {
+      id: Date.now(),
+      visible: true,
+      position: [-2, 3, 2],
+      targetPosition: [0, 0, 0],
+      intensity: 3,
+      kelvin: 5500,
+      decay: 1,
+      angle: 45,
+      penumbra: 0.5,
+      volumeOpacity: 0,
+    }
+    setLights([...lights, newLight])
+    setSelectedLightId(newLight.id)
+  }
+  const removeLight = (id: number) => {
+    if (lights.length > 1) {
+      setLights(lights.filter((light) => light.id !== id))
+      if (selectedLightId === id) setSelectedLightId(lights.find((l) => l.id !== id)?.id || null)
+    } else toast.error("Cannot remove the last light.")
+  }
+  const toggleLightVisibility = (id: number) => setLights(lights.map((l) => (l.id === id ? { ...l, visible: !l.visible } : l)))
+  const cloneLight = (id: number) => {
+    if (lights.length >= 5) return toast.error("Maximum of 5 lights reached.")
+    const lightToClone = lights.find((l) => l.id === id)
+    if (lightToClone) {
+      const newLight = { ...lightToClone, id: Date.now(), position: [lightToClone.position[0] + 1, lightToClone.position[1], lightToClone.position[2]] as [number, number, number] }
+      setLights([...lights, newLight])
+      setSelectedLightId(newLight.id)
+    }
+  }
+  const focusLightOnModel = (lightId: number) => {
+    if (!modelRef.current) return toast.error("Model not loaded yet.")
+    const box = new THREE.Box3().setFromObject(modelRef.current)
+    const center = new THREE.Vector3()
+    box.getCenter(center)
+    handleLightChange(lightId, { targetPosition: [center.x, center.y, center.z] })
+    toast.success("Light focused on model center.")
+  }
+
+  const handleCanvasPointerDown = (e: React.PointerEvent<HTMLDivElement>) => {
+    if (e.shiftKey && selectedLightId !== null) {
+      e.stopPropagation()
+      setIsLightDragging(true)
+      setIsOrbitControlsEnabled(false)
+        ; (e.target as HTMLElement).style.cursor = "grabbing"
+    }
+  }
+  const handleCanvasPointerMove = (e: React.PointerEvent<HTMLDivElement>) => {
+    if (isLightDragging && selectedLightId !== null) {
+      e.stopPropagation()
+      const light = lights.find((l) => l.id === selectedLightId)
+      if (!light || !orbitControlsRef.current) return
+      const targetPos = new THREE.Vector3().fromArray(light.targetPosition)
+      const currentLightVec = new THREE.Vector3().fromArray(light.position).sub(targetPos)
+      const camera = orbitControlsRef.current.object
+      const cameraUp = new THREE.Vector3(0, 1, 0).applyQuaternion(camera.quaternion)
+      const cameraRight = new THREE.Vector3(1, 0, 0).applyQuaternion(camera.quaternion)
+      const rotAroundUp = new THREE.Quaternion().setFromAxisAngle(cameraUp, -e.movementX * 0.005)
+      const rotAroundRight = new THREE.Quaternion().setFromAxisAngle(cameraRight, -e.movementY * 0.005)
+      currentLightVec.applyQuaternion(rotAroundUp).applyQuaternion(rotAroundRight)
+      const newPosition = currentLightVec.add(targetPos)
+      handleLightChange(selectedLightId, { position: newPosition.toArray() as [number, number, number] })
+    }
+  }
+  const handleCanvasPointerUp = () => {
+    if (isLightDragging) {
+      setIsLightDragging(false)
+      setIsOrbitControlsEnabled(true)
+      document.body.style.cursor = "auto"
+    }
+  }
+
+  if (modelId) {
+    if (!selectedModel) {
+      return (
+        <div className="w-full h-screen flex items-center justify-center bg-black">
+          <LoaderIcon className="w-12 h-12 animate-spin text-white" />
+        </div>
+      )
+    }
+    return (
+      <div className="w-full h-screen relative" style={backgroundStyle}>
+        <Toaster richColors />
+        <Canvas
+          shadows
+          gl={{ preserveDrawingBuffer: true, alpha: true, stencil: true }}
+          camera={{ fov: fieldOfView }}
+          onPointerMissed={(e) => e.button === 0 && setSelectedLightId(null)}
+          onPointerDown={handleCanvasPointerDown}
+          onPointerMove={handleCanvasPointerMove}
+          onPointerUp={handleCanvasPointerUp}
+          onPointerLeave={handleCanvasPointerUp}
+          frameloop={isLightDragging ? "always" : "demand"}
+        >
+          <Suspense fallback={<Loader />}>
+            <EffectComposer disableNormalPass>
+              {lightsEnabled && lights.map((light) => <SpotLightInScene key={light.id} light={light} />)}
+              <Bounds fit clip damping={6} margin={1.2} key={`${selectedModel.id}-${boundsKey}`}>
+                <ModelViewer ref={modelRef} modelUrl={selectedModel.model_url} materialMode={materialMode} />
+              </Bounds>
+              {bloomEnabled && <Bloom mipmapBlur intensity={0.5} luminanceThreshold={1} />}
+            </EffectComposer>
+            <CaptureController ref={captureControllerRef} modelRef={modelRef} />
+          </Suspense>
+          <OrbitControls ref={orbitControlsRef} enabled={isOrbitControlsEnabled} makeDefault />
+          <ambientLight intensity={0.1} />
+        </Canvas>
+
+        <div className="absolute top-4 left-4 z-10">
+          <Button variant="ghost" size="icon" onClick={handleCloseViewer} className="text-white bg-black/50 backdrop-blur-sm hover:bg-white/20 rounded-full">
+            <ChevronLeft className="h-6 w-6" />
+          </Button>
+        </div>
+
+        <div
+          ref={panelRef}
+          className="absolute top-4 right-4 w-[350px] bg-black/50 backdrop-blur-sm border border-white/20 rounded-lg text-white z-10 flex flex-col max-h-[calc(100vh-2rem)]"
+          style={{ transform: `translate(${panelPosition.x}px, ${panelPosition.y}px)` }}
+          onPointerDown={() => setIsOrbitControlsEnabled(false)}
+          onPointerUp={() => setIsOrbitControlsEnabled(true)}
+        >
+          <div className="flex items-center justify-between p-4 cursor-grab" onPointerDown={handlePanelDragStart}>
+            <h2 className="text-lg font-semibold">Settings</h2>
+            <button onClick={() => setIsSettingsPanelOpen(!isSettingsPanelOpen)} className="z-10 p-1 -m-1">
+              <ChevronDown className={`h-5 w-5 transition-transform ${isSettingsPanelOpen ? "rotate-180" : ""}`} />
+            </button>
+          </div>
+          {isSettingsPanelOpen && (
+            <SettingsPanel
+              model={selectedModel}
+              onUpdate={handleModelUpdate}
+              onDelete={() => {
+                setSelectedItems(new Set([selectedModel.id]))
+                handleBulkDelete()
+              }}
+              onThumbnailUpload={handleThumbnailUpload}
+              onCaptureThumbnail={handleCaptureThumbnail}
+              onDeleteThumbnail={handleDeleteThumbnail}
+              lights={lights}
+              onLightChange={handleLightChange}
+              addLight={addLight}
+              removeLight={removeLight}
+              cloneLight={cloneLight}
+              toggleLightVisibility={toggleLightVisibility}
+              selectedLightId={selectedLightId}
+              onSelectLight={setSelectedLightId}
+              onFocusLight={focusLightOnModel}
+              lightsEnabled={lightsEnabled}
+              onLightsEnabledChange={setLightsEnabled}
+              environmentEnabled={environmentEnabled}
+              onEnvironmentEnabledChange={setEnvironmentEnabled}
+              bloomEnabled={bloomEnabled}
+              onBloomEnabledChange={setBloomEnabled}
+              bgType={bgType}
+              onBgTypeChange={setBgType}
+              bgColor1={bgColor1}
+              onBgColor1Change={setBgColor1}
+              bgColor2={bgColor2}
+              onBgColor2Change={setBgColor2}
+              bgImage={bgImage}
+              onBgImageChange={setBgImage}
+              fieldOfView={fieldOfView}
+              onFieldOfViewChange={setFieldOfView}
+              onSaveView={handleSaveViewSettings}
+              onDeleteView={handleDeleteViewSettings}
+              onResetView={() => resetViewSettings(selectedModel.view_settings)}
+              onUnifyModel={handleUnifyModel}
+            />
+          )}
+        </div>
+
+        <div className="absolute bottom-4 left-1/2 -translate-x-1/2 bg-black/50 backdrop-blur-sm p-2 rounded-full flex items-center gap-1">
+          <Button variant={materialMode === "white" ? "secondary" : "ghost"} size="icon" onClick={() => setMaterialMode("white")} className="text-white rounded-full">
+            <div className="w-6 h-6 rounded-full bg-white" />
+          </Button>
+          <Button variant={materialMode === "pbr" ? "secondary" : "ghost"} size="icon" onClick={() => setMaterialMode("pbr")} className="text-white rounded-full">
+            <Palette />
+          </Button>
+          <Button variant={materialMode === "normal" ? "secondary" : "ghost"} size="icon" onClick={() => setMaterialMode("normal")} className="text-white rounded-full">
+            <div className="w-6 h-6 rounded-full bg-gradient-to-br from-red-500 via-green-500 to-blue-500" />
+          </Button>
+          <Separator orientation="vertical" className="h-6 bg-white/20 mx-1" />
+          <Button
+            variant="ghost"
+            size="icon"
+            onClick={() => {
+              const link = document.createElement("a")
+              link.href = selectedModel.model_url
+              link.download = `${selectedModel.name}.glb`
+              document.body.appendChild(link)
+              link.click()
+              document.body.removeChild(link)
+            }}
+            className="text-white rounded-full"
+          >
+            <Download />
+          </Button>
+        </div>
+
+        <div className="absolute bottom-4 right-4 text-xs text-muted-foreground/80 bg-black/50 p-1.5 rounded-md">
+          Use <kbd className="font-sans rounded bg-muted/50 p-1">←</kbd> <kbd className="font-sans rounded bg-muted/50 p-1">→</kbd> to navigate,{" "}
+          <kbd className="font-sans rounded bg-muted/50 p-1">R</kbd> to randomize lights, <kbd className="font-sans rounded bg-muted/50 p-1">Shift+Drag</kbd> to move light.
+        </div>
+      </div>
+    )
+  }
+
+  return (
+    <div className="bg-background text-foreground h-full flex flex-col">
+      <Toaster richColors />
+      <Input type="file" ref={fileInputRef} onChange={(e) => handleUploadAction(e.target.files)} className="hidden" multiple accept=".glb" />
+      <SidebarProvider defaultOpen>
+        <Sidebar collapsible="icon" variant="floating">
+          <SidebarHeader>
+            <div className="flex items-center gap-2 group-data-[collapsible=icon]:justify-center">
+              <SidebarTrigger />
+              <h1 className="font-semibold text-lg group-data-[collapsible=icon]:hidden">My Models</h1>
+            </div>
+          </SidebarHeader>
+          <SidebarContent>
+            <SidebarMenu>
+              <SidebarMenuItem>
+                <SidebarMenuButton onClick={() => fileInputRef.current?.click()} tooltip="Upload Models">
+                  <Upload />
+                  <span>Upload</span>
+                </SidebarMenuButton>
+              </SidebarMenuItem>
+              <SidebarMenuItem>
+                <SidebarMenuButton onClick={() => handleBreadcrumbClick(null)} isActive={currentFolderId === null} tooltip="Assets">
+                  <Grid />
+                  <span>Assets</span>
+                </SidebarMenuButton>
+              </SidebarMenuItem>
+              <SidebarMenuItem>
+                <SidebarMenuButton onClick={() => setIsNewFolderDialogOpen(true)} tooltip="New Folder">
+                  <FolderPlus />
+                  <span>New Folder</span>
+                </SidebarMenuButton>
+              </SidebarMenuItem>
+            </SidebarMenu>
+          </SidebarContent>
+        </Sidebar>
+        <SidebarInset>
+          <header className="flex items-center justify-between p-4 border-b gap-4">
+            <div className="flex items-center text-sm">
+              {breadcrumbs.map((crumb, index) => (
+                <Fragment key={crumb.id || "root"}>
+                  <button onClick={() => handleBreadcrumbClick(crumb.id)} className="hover:underline disabled:text-foreground disabled:no-underline" disabled={index === breadcrumbs.length - 1}>
+                    {crumb.name}
+                  </button>
+                  {index === breadcrumbs.length - 1 && gallery?.currentFolder && (
+                    <Button variant="ghost" size="icon" className="h-6 w-6 ml-1" onClick={() => setEditingFolder(gallery.currentFolder)}>
+                      <Info className="h-4 w-4" />
+                    </Button>
+                  )}
+                  {index < breadcrumbs.length - 1 && <ChevronRight className="h-4 w-4 mx-1 text-muted-foreground" />}
+                </Fragment>
+              ))}
+            </div>
+            <div className="flex items-center gap-4">
+              <div className="relative">
+                <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+                <Input type="search" placeholder="Search..." className="pl-8 w-48 md:w-64" value={searchQuery} onChange={(e) => setSearchQuery(e.target.value)} />
+              </div>
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>
+                  <Button variant="outline" size="icon" className="shrink-0 bg-transparent">
+                    <ListFilter className="h-4 w-4" />
+                    <span className="sr-only">Sort</span>
+                  </Button>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="end">
+                  <DropdownMenuLabel>Sort by</DropdownMenuLabel>
+                  <DropdownMenuRadioGroup value={sortOption} onValueChange={setSortOption}>
+                    <DropdownMenuRadioItem value="created_at-desc">Most Recent</DropdownMenuRadioItem>
+                    <DropdownMenuRadioItem value="name-asc">Name (A-Z)</DropdownMenuRadioItem>
+                    <DropdownMenuRadioItem value="name-desc">Name (Z-A)</DropdownMenuRadioItem>
+                  </DropdownMenuRadioGroup>
+                </DropdownMenuContent>
+              </DropdownMenu>
+            </div>
+          </header>
+
+          <main
+            className="relative flex-1 p-4 md:p-8 overflow-y-auto"
+            onClick={() => setSelectedItems(new Set())}
+            onDragEnter={(e) => {
+              e.preventDefault()
+              setIsDragging(true)
+            }}
+            onDragLeave={() => setIsDragging(false)}
+            onDragOver={(e) => e.preventDefault()}
+            onDrop={(e) => {
+              e.preventDefault()
+              setIsDragging(false)
+              handleUploadAction(e.dataTransfer.files)
+            }}
+          >
+            {isDragging && (
+              <div className="absolute inset-4 bg-primary/10 border-2 border-dashed border-primary rounded-lg flex items-center justify-center z-10 pointer-events-none">
+                <div className="text-center">
+                  <Upload size={48} className="mx-auto text-primary" />
+                  <p className="mt-2 font-semibold text-primary">Drop files to upload</p>
+                </div>
+              </div>
+            )}
+            {isLoading && (
+              <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-4">
+                {Array.from({ length: 18 }).map((_, i) => (
+                  <Skeleton key={i} className="aspect-square rounded-lg" />
+                ))}
+              </div>
+            )}
+            {error && <div className="text-center text-destructive">Failed to load gallery.</div>}
+            {!isLoading && filteredItems.length === 0 && (
+              <div className="text-center text-muted-foreground flex flex-col items-center justify-center h-full pt-20">
+                {searchQuery ? <Search size={64} className="mb-4" /> : uploadingFiles.length === 0 && <FolderIcon size={64} className="mb-4" />}
+                <h2 className="text-2xl font-semibold">{searchQuery ? "No results found" : uploadingFiles.length > 0 ? "Processing uploads..." : "This folder is empty"}</h2>
+                <p className="mt-2">{searchQuery ? `Your search for "${searchQuery}" did not match any items.` : uploadingFiles.length === 0 && "Drag and drop files here or use the upload button."}</p>
+              </div>
+            )}
+            <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-4">
+              {uploadingFiles.map((file) => (
+                <div key={file.name} className="aspect-square rounded-lg bg-muted flex flex-col items-center justify-center p-2">
+                  <div className="w-full bg-secondary rounded-full h-2.5 mb-2">
+                    <div className="bg-primary h-2.5 rounded-full" style={{ width: `${file.progress}%` }} />
+                  </div>
+                  <p className="text-xs text-center truncate w-full">{file.name}</p>
+                </div>
+              ))}
+              {filteredItems.map((item) => (
+                <ItemContextMenu
+                  key={item.id}
+                  item={item}
+                  onRename={() => setRenameItem(item)}
+                  onDelete={() => {
+                    setSelectedItems(new Set([item.id]))
+                    handleBulkDelete()
+                  }}
+                  onMove={(targetFolderId) => {
+                    setSelectedItems(new Set([item.id]))
+                    handleBulkMove(targetFolderId)
+                  }}
+                  onSetPublic={(isPublic) => {
+                    setSelectedItems(new Set([item.id]))
+                    handleBulkSetPublic(isPublic)
+                  }}
+                  allFolders={allFolders}
+                >
+                  <div
+                    onClick={(e) => handleItemClick(e, item)}
+                    onDoubleClick={() => (item.type === "folder" ? handleNavigateToFolder(item.id) : handleModelClick(item))}
+                    className={cn(
+                      "group relative aspect-square rounded-lg overflow-hidden cursor-pointer transition-all duration-200",
+                      selectedItems.has(item.id) && "ring-2 ring-primary ring-offset-2 ring-offset-background",
+                    )}
+                  >
+                    {item.type === "folder" ? (
+                      <div className="w-full h-full flex flex-col items-center justify-center bg-muted hover:bg-secondary transition-colors">
+                        <FolderIcon className="w-1/3 h-1/3 text-foreground/50" />
+                        <p className="text-sm font-semibold truncate mt-2 text-center w-full px-2">{item.name}</p>
+                      </div>
+                    ) : (
+                      <>
+                        <img
+                          src={item.thumbnail_url || "/placeholder.svg"}
+                          alt={item.name}
+                          className="w-full h-full object-contain transition-transform duration-300 group-hover:scale-110 bg-muted"
+                          onError={(e) => {
+                            ; (e.target as HTMLImageElement).src = `/placeholder.svg?width=400&height=400&query=error`
+                          }}
+                        />
+                        <div className="absolute inset-0 bg-black/60 opacity-0 group-hover:opacity-100 transition-opacity duration-300 flex items-end p-2">
+                          <p className="text-sm font-semibold truncate text-white">{item.name}</p>
+                        </div>
+                      </>
+                    )}
+                    <div className={cn("absolute top-2 left-2 transition-opacity", selectedItems.has(item.id) ? "opacity-100" : "opacity-0 group-hover:opacity-100")}>
+                      <Checkbox
+                        checked={selectedItems.has(item.id)}
+                        onCheckedChange={(checked) => {
+                          const newSelectedItems = new Set(selectedItems)
+                          if (checked) newSelectedItems.add(item.id)
+                          else newSelectedItems.delete(item.id)
+                          setSelectedItems(newSelectedItems)
+                        }}
+                        className="bg-background/50 border-white/50 data-[state=checked]:bg-primary"
+                      />
+                    </div>
+                    <div className="absolute bottom-2 left-2">{item.is_public ? <Globe className="h-4 w-4 text-white/70" /> : <Lock className="h-4 w-4 text-white/70" />}</div>
+                  </div>
+                </ItemContextMenu>
+              ))}
+              {!isLoading && !searchQuery && (
+                <div
+                  onClick={() => fileInputRef.current?.click()}
+                  className="group relative aspect-square rounded-lg border-2 border-dashed border-muted-foreground/50 flex flex-col items-center justify-center text-muted-foreground hover:bg-muted hover:border-primary hover:text-primary transition-colors cursor-pointer"
+                >
+                  <Upload className="w-1/3 h-1/3 transition-transform group-hover:scale-110" />
+                  <p className="text-sm font-semibold mt-2">Upload Models</p>
+                </div>
+              )}
+            </div>
+          </main>
+
+          {selectedItems.size > 0 && (
+            <BulkActionBar
+              selectedCount={selectedItems.size}
+              onClear={() => setSelectedItems(new Set())}
+              onDelete={handleBulkDelete}
+              onMove={handleBulkMove}
+              onSetPublic={handleBulkSetPublic}
+              onDownload={handleBulkDownload}
+              allItems={galleryItems}
+              selectedIds={selectedItems}
+              allFolders={allFolders}
+              currentFolderId={currentFolderId}
+            />
+          )}
+        </SidebarInset>
+      </SidebarProvider>
+
+      <NewFolderDialog open={isNewFolderDialogOpen} onOpenChange={setIsNewFolderDialogOpen} onCreate={handleCreateFolder} />
+      {renameItem && <RenameDialog item={renameItem} onOpenChange={() => setRenameItem(null)} onRename={handleRename} />}
+      {editingFolder && (
+        <FolderDescriptionDialog folder={editingFolder} open={!!editingFolder} onOpenChange={() => setEditingFolder(null)} onSave={handleSaveFolderDescription} />
+      )}
+    </div>
+  )
+}
+
+export default GalleryPage
+
+
+=== C:\Users\Shadow\Documents\GitHub\space.iverfinne.no\components\gallery\bulk-action-bar.tsx ===
+
+"use client"
+
+import { Button } from "@/components/ui/button"
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu"
+import type { Folder, GalleryItem } from "@/types"
+import { Download, FolderIcon, FolderSymlink, Globe, Lock, Trash2, X } from "lucide-react"
+
+interface Props {
+    selectedCount: number
+    onClear: () => void
+    onDelete: () => void
+    onMove: (targetFolderId: string | null) => void
+    onSetPublic: (isPublic: boolean) => void
+    onDownload: () => void
+    allItems: GalleryItem[]
+    selectedIds: Set<string>
+    allFolders?: Folder[]
+    currentFolderId: string | null
+}
+
+export function BulkActionBar({ selectedCount, onClear, onDelete, onMove, onSetPublic, onDownload, allItems, selectedIds, allFolders, currentFolderId }: Props) {
+    const canDownload = allItems.filter((i) => selectedIds.has(i.id)).every((i) => i.type === "model")
+    return (
+        <div className="absolute bottom-0 left-0 right-0 bg-background border-t p-2 flex items-center justify-between z-20">
+            <div className="flex items-center gap-4">
+                <Button variant="ghost" size="icon" onClick={onClear}><X className="h-5 w-5" /></Button>
+                <span className="font-semibold">{selectedCount} selected</span>
+            </div>
+            <div className="flex items-center gap-2">
+                <DropdownMenu>
+                    <DropdownMenuTrigger asChild><Button variant="outline" size="icon"><FolderSymlink className="h-4 w-4" /></Button></DropdownMenuTrigger>
+                    <DropdownMenuContent>
+                        <DropdownMenuItem onSelect={() => onMove(null)} disabled={currentFolderId === null}><FolderIcon className="mr-2 h-4 w-4" /> Assets (Root)</DropdownMenuItem>
+                        {allFolders?.filter((f) => f.id !== currentFolderId).map((folder) => (
+                            <DropdownMenuItem key={folder.id} onSelect={() => onMove(folder.id)}><FolderIcon className="mr-2 h-4 w-4" /> {folder.name}</DropdownMenuItem>
+                        ))}
+                    </DropdownMenuContent>
+                </DropdownMenu>
+                <Button variant="outline" size="icon" onClick={() => onSetPublic(true)}><Globe className="h-4 w-4" /></Button>
+                <Button variant="outline" size="icon" onClick={() => onSetPublic(false)}><Lock className="h-4 w-4" /></Button>
+                {canDownload && <Button variant="outline" size="icon" onClick={onDownload}><Download className="h-4 w-4" /></Button>}
+                <Button variant="destructive" size="icon" onClick={onDelete}><Trash2 className="h-4 w-4" /></Button>
+            </div>
+        </div>
+    )
+}
+
+
+=== C:\Users\Shadow\Documents\GitHub\space.iverfinne.no\components\gallery\settings-panel.tsx ===
+
+﻿"use client"
+
+import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from "@/components/ui/accordion"
+import {
+    AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter,
+    AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger
+} from "@/components/ui/alert-dialog"
+import { Button } from "@/components/ui/button"
+import { Input } from "@/components/ui/input"
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
+import { Separator } from "@/components/ui/separator"
+import { Slider } from "@/components/ui/slider"
+import { Switch } from "@/components/ui/switch"
+import type { Light, Model } from "@/types"
+import { useGesture } from "@use-gesture/react"
+import { Camera, CopyIcon as Clone, Crosshair, Eye, EyeOff, Globe, Lock, Plus, RotateCcw, Save, Scale, Trash2, Upload } from "lucide-react"
+import React, { useRef, useState } from "react"
+
+function EditableValue({ value, onSave, units = "", className, inputClassName }: {
+    value: string | number; onSave: (newValue: string) => void; units?: string; className?: string; inputClassName?: string
+}) {
+    const [isEditing, setIsEditing] = useState(false)
+    const [currentValue, setCurrentValue] = useState(value.toString())
+    const inputRef = useRef<HTMLInputElement>(null)
+
+    React.useEffect(() => setCurrentValue(value.toString()), [value])
+    React.useEffect(() => { if (isEditing) inputRef.current?.select() }, [isEditing])
+    const handleSave = () => { onSave(currentValue); setIsEditing(false) }
+
+    return isEditing ? (
+        <Input
+            ref={inputRef}
+            type="text"
+            value={currentValue}
+            onChange={(e) => setCurrentValue(e.target.value)}
+            onBlur={handleSave}
+            onKeyDown={(e) => { if (e.key === "Enter") handleSave(); if (e.key === "Escape") setIsEditing(false) }}
+            className={`h-6 text-xs w-full text-right bg-white/20 border-white/30 ${inputClassName ?? ""}`}
+        />
+    ) : (
+        <span
+            onClick={() => setIsEditing(true)}
+            className={`cursor-pointer text-xs w-full text-right truncate ${className ?? ""}`}
+            title={typeof value === "number" ? (value as number).toFixed(2) : (value as string)}
+        >
+            {typeof value === "number" ? (value as number).toFixed(units === "K" ? 0 : 1) : value}
+            {units}
+        </span>
+    )
+}
+
+function DirectionalPad({ value, onChange }: { value: { x: number; z: number }; onChange: (v: { x: number; z: number }) => void }) {
+    const padRef = useRef<HTMLDivElement>(null)
+    const bind = useGesture({
+        onDrag: ({ xy }) => {
+            if (!padRef.current) return
+            const rect = padRef.current.getBoundingClientRect(), half = rect.width / 2
+            let x = xy[0] - rect.left - half, z = xy[1] - rect.top - half
+            const d = Math.hypot(x, z)
+            if (d > half) { x = (x / d) * half; z = (z / d) * half }
+            onChange({ x: (x / half) * 5, z: (z / half) * 5 })
+        },
+    }, { drag: { filterTaps: true } })
+    const handleX = (value.x / 5) * 50, handleZ = (value.z / 5) * 50
+    return (
+        <div ref={padRef} {...bind()} className="w-24 h-24 bg-white/10 rounded-full relative cursor-pointer border border-white/20 flex items-center justify-center">
+            <div className="w-full h-px bg-white/20 absolute" />
+            <div className="h-full w-px bg-white/20 absolute" />
+            <div className="w-4 h-4 rounded-full absolute border-2 border-white bg-blue-500"
+                style={{ transform: `translate(${handleX}px, ${handleZ}px)`, touchAction: "none" }} />
+        </div>
+    )
+}
+
+function LightSettings({ light, onLightChange, onFocus }: {
+    light: Light; onLightChange: (id: number, newValues: Partial<Omit<Light, "id">>) => void; onFocus: (id: number) => void
+}) {
+    return (
+        <div className="space-y-3 text-xs mt-2 bg-white/5 p-3 rounded-md">
+            <div className="flex items-center justify-between">
+                <label>Position (X, Y, Z)</label>
+                <div className="flex gap-1 w-1/2">
+                    <EditableValue value={light.position[0]} onSave={(v) => onLightChange(light.id, { position: [Number(v), light.position[1], light.position[2]] })} />
+                    <EditableValue value={light.position[1]} onSave={(v) => onLightChange(light.id, { position: [light.position[0], Number(v), light.position[2]] })} />
+                    <EditableValue value={light.position[2]} onSave={(v) => onLightChange(light.id, { position: [light.position[0], light.position[1], Number(v)] })} />
+                </div>
+            </div>
+            <div className="flex items-start justify-between">
+                <div className="pt-2 space-y-2">
+                    <label>Target</label>
+                    <Button size="icon" className="text-xs h-6 w-6" onClick={() => onFocus(light.id)}>
+                        <Crosshair className="h-3 w-3" />
+                    </Button>
+                </div>
+                <DirectionalPad value={{ x: light.targetPosition[0], z: light.targetPosition[2] }}
+                    onChange={({ x, z }) => onLightChange(light.id, { targetPosition: [x, light.targetPosition[1], z] })} />
+            </div>
+            <div className="flex items-center justify-between">
+                <label>Target Height (Y)</label>
+                <Slider value={[light.targetPosition[1]]}
+                    onValueChange={([v]) => onLightChange(light.id, { targetPosition: [light.targetPosition[0], v, light.targetPosition[2]] })}
+                    min={-10} max={10} step={0.1} className="w-1/2" />
+            </div>
+            <div className="flex items-center justify-between">
+                <label>Intensity</label>
+                <Slider value={[light.intensity]} onValueChange={([v]) => onLightChange(light.id, { intensity: v })} min={0} max={250} step={0.1} className="w-1/2" />
+            </div>
+            <div className="flex items-center justify-between">
+                <label>Color Temp</label>
+                <Slider value={[light.kelvin]} onValueChange={([v]) => onLightChange(light.id, { kelvin: v })} min={1000} max={12000} step={100} className="w-1/2" />
+            </div>
+            <div className="flex items-center justify-between">
+                <label>Cone Angle</label>
+                <Slider value={[light.angle]} onValueChange={([v]) => onLightChange(light.id, { angle: v })} min={0} max={90} step={1} className="w-1/2" />
+            </div>
+            <div className="flex items-center justify-between">
+                <label>Penumbra</label>
+                <Slider value={[light.penumbra]} onValueChange={([v]) => onLightChange(light.id, { penumbra: v })} min={0} max={1} step={0.01} className="w-1/2" />
+            </div>
+            <div className="flex items-center justify-between">
+                <label>Distance</label>
+                <Slider value={[light.distance ?? 0]} onValueChange={([v]) => onLightChange(light.id, { distance: v })} min={0} max={20} step={0.1} className="w-1/2" />
+            </div>
+        </div>
+    )
+}
+
+export interface SettingsPanelProps {
+    model: Model
+    onUpdate: (id: string, updates: Partial<Omit<Model, "id" | "created_at">>) => void
+    onDelete: () => void
+    onThumbnailUpload: (file: File) => void
+    onCaptureThumbnail: () => void
+    onDeleteThumbnail: () => void
+    lights: Light[]
+    onLightChange: (id: number, newValues: Partial<Omit<Light, "id">>) => void
+    addLight: () => void
+    removeLight: (id: number) => void
+    cloneLight: (id: number) => void
+    toggleLightVisibility: (id: number) => void
+    selectedLightId: number | null
+    onSelectLight: (id: number | null) => void
+    onFocusLight: (id: number) => void
+    lightsEnabled: boolean
+    onLightsEnabledChange: (enabled: boolean) => void
+    environmentEnabled: boolean
+    onEnvironmentEnabledChange: (enabled: boolean) => void
+    bloomEnabled: boolean
+    onBloomEnabledChange: (enabled: boolean) => void
+    bgType: "color" | "gradient" | "image"
+    onBgTypeChange: (type: "color" | "gradient" | "image") => void
+    bgColor1: string
+    onBgColor1Change: (value: string) => void
+    bgColor2: string
+    onBgColor2Change: (value: string) => void
+    bgImage: string | null
+    onBgImageChange: (value: string | null) => void
+    fieldOfView: number
+    onFieldOfViewChange: (value: number) => void
+    onSaveView: () => void
+    onDeleteView: () => void
+    onResetView: () => void
+    onUnifyModel: () => void
+}
+
+export function SettingsPanel(props: SettingsPanelProps) {
+    const {
+        model, onUpdate, onDelete, onThumbnailUpload, onCaptureThumbnail, onDeleteThumbnail,
+        lights, onLightChange, addLight, removeLight, cloneLight, toggleLightVisibility,
+        selectedLightId, onSelectLight, onFocusLight,
+        lightsEnabled, onLightsEnabledChange,
+        environmentEnabled, onEnvironmentEnabledChange,
+        bloomEnabled, onBloomEnabledChange,
+        bgType, onBgTypeChange, bgColor1, onBgColor1Change, bgColor2, onBgColor2Change, bgImage, onBgImageChange,
+        fieldOfView, onFieldOfViewChange, onSaveView, onDeleteView, onResetView, onUnifyModel,
+    } = props
+
+    const [showDeleteConfirm, setShowDeleteConfirm] = useState(false)
+    const thumbnailInputRef = useRef<HTMLInputElement>(null)
+    const bgImageInputRef = useRef<HTMLInputElement>(null)
+
+    const handleBgImageUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+        const file = e.target.files?.[0]
+        if (!file) return
+        const reader = new FileReader()
+        reader.onloadend = () => onBgImageChange(reader.result as string)
+        reader.readAsDataURL(file)
+    }
+
+    return (
+        <div className="px-4 pb-4 flex flex-col h-full text-white overflow-y-auto">
+            <div className="space-y-4 flex-1 overflow-y-auto pr-2 -mr-2">
+                {/* Model */}
+                <div className="space-y-2">
+                    <h3 className="text-sm font-semibold">Model</h3>
+                    <div className="flex items-center justify-between text-xs">
+                        <label>Name</label>
+                        <div className="w-1/2">
+                            <EditableValue value={model.name} onSave={(newName) => onUpdate(model.id, { name: newName })} />
+                        </div>
+                    </div>
+                    <div className="flex items-center justify-between text-xs">
+                        <label>Visibility</label>
+                        <Button size="sm" className="text-xs h-6 bg-transparent" variant="outline" onClick={() => onUpdate(model.id, { is_public: !model.is_public })}>
+                            {model.is_public ? <Globe className="h-3 w-3 mr-1" /> : <Lock className="h-3 w-3 mr-1" />}
+                            {model.is_public ? "Public" : "Private"}
+                        </Button>
+                    </div>
+                    <div className="flex items-center justify-between text-xs">
+                        <label>Thumbnail</label>
+                        <div className="flex items-center gap-1">
+                            <AlertDialog>
+                                <AlertDialogTrigger asChild>
+                                    <Button variant="destructive" size="icon" className="h-6 w-6" disabled={model.thumbnail_url.includes("/placeholder.svg")}>
+                                        <Trash2 className="h-3 w-3" />
+                                    </Button>
+                                </AlertDialogTrigger>
+                                <AlertDialogContent>
+                                    <AlertDialogHeader>
+                                        <AlertDialogTitle>Delete Thumbnail?</AlertDialogTitle>
+                                        <AlertDialogDescription>This will revert to the placeholder thumbnail.</AlertDialogDescription>
+                                    </AlertDialogHeader>
+                                    <AlertDialogFooter>
+                                        <AlertDialogCancel>Cancel</AlertDialogCancel>
+                                        <AlertDialogAction onClick={onDeleteThumbnail}>Delete</AlertDialogAction>
+                                    </AlertDialogFooter>
+                                </AlertDialogContent>
+                            </AlertDialog>
+                            <Button size="icon" className="text-xs h-6 w-6" onClick={onCaptureThumbnail}><Camera className="h-3 w-3" /></Button>
+                            <Button size="icon" className="text-xs h-6 w-6" onClick={() => thumbnailInputRef.current?.click()}><Upload className="h-3 w-3" /></Button>
+                            <input type="file" ref={thumbnailInputRef} className="hidden" accept="image/*" onChange={(e) => e.target.files && onThumbnailUpload(e.target.files[0])} />
+                        </div>
+                    </div>
+                    <div className="flex items-center justify-between text-xs">
+                        <label>Unify Scale (100mm)</label>
+                        <Button size="icon" className="text-xs h-6 w-6" onClick={onUnifyModel} title="Scale model to be 100mm tall and center it.">
+                            <Scale className="h-3 w-3" />
+                        </Button>
+                    </div>
+                    <div className="flex items-center justify-between text-xs">
+                        <label>Delete Model</label>
+                        {!showDeleteConfirm ? (
+                            <Button variant="destructive" size="sm" className="text-xs h-6" onClick={() => setShowDeleteConfirm(true)}>Delete</Button>
+                        ) : (
+                            <div className="flex gap-1">
+                                <Button size="sm" className="text-xs h-6" onClick={() => setShowDeleteConfirm(false)}>Cancel</Button>
+                                <Button variant="destructive" size="sm" className="text-xs h-6" onClick={onDelete}>Confirm</Button>
+                            </div>
+                        )}
+                    </div>
+                </div>
+
+                <Separator className="bg-white/20" />
+
+                {/* View Settings */}
+                <div className="space-y-2">
+                    <div className="flex items-center justify-between">
+                        <h3 className="text-sm font-semibold">View Settings</h3>
+                        <div className="flex items-center gap-2">
+                            <AlertDialog>
+                                <AlertDialogTrigger asChild>
+                                    <Button variant="destructive" size="icon" className="h-6 w-6" disabled={!model.view_settings}>
+                                        <Trash2 className="h-3 w-3" />
+                                    </Button>
+                                </AlertDialogTrigger>
+                                <AlertDialogContent>
+                                    <AlertDialogHeader>
+                                        <AlertDialogTitle>Delete Saved View?</AlertDialogTitle>
+                                        <AlertDialogDescription>This cannot be undone.</AlertDialogDescription>
+                                    </AlertDialogHeader>
+                                    <AlertDialogFooter>
+                                        <AlertDialogCancel>Cancel</AlertDialogCancel>
+                                        <AlertDialogAction onClick={onDeleteView}>Delete</AlertDialogAction>
+                                    </AlertDialogFooter>
+                                </AlertDialogContent>
+                            </AlertDialog>
+                            <Button variant="ghost" size="icon" className="h-6 w-6" onClick={onResetView}><RotateCcw className="h-4 w-4" /></Button>
+                            <Button variant="default" size="icon" className="text-xs h-6 w-6" onClick={onSaveView}><Save className="h-3 w-3" /></Button>
+                        </div>
+                    </div>
+                    <div className="flex items-center justify-between text-xs">
+                        <label>Field of View</label>
+                        <div className="flex items-center gap-2 w-1/2">
+                            <Slider value={[fieldOfView]} onValueChange={([v]) => onFieldOfViewChange(v)} min={10} max={120} step={1} className="w-3/4" />
+                            <EditableValue value={fieldOfView} onSave={(v) => onFieldOfViewChange(Number(v))} className="w-1/4" />
+                        </div>
+                    </div>
+                </div>
+
+                <Separator className="bg-white/20" />
+
+                {/* Lights */}
+                <div className="space-y-2">
+                    <div className="flex items-center justify-between">
+                        <h3 className="text-sm font-semibold">Lights</h3>
+                        <Switch checked={lightsEnabled} onCheckedChange={onLightsEnabledChange} />
+                    </div>
+                    {lightsEnabled && (
+                        <>
+                            <Accordion type="single" collapsible className="w-full"
+                                value={selectedLightId?.toString()} onValueChange={(v) => onSelectLight(v ? Number(v) : null)}>
+                                {lights.map((light, i) => (
+                                    <AccordionItem key={light.id} value={light.id.toString()} className="border-b-white/10">
+                                        <AccordionTrigger className="flex-1 px-3 py-2 text-xs hover:bg-white/5 rounded-t-md"
+                                            onClick={() => onSelectLight(light.id === selectedLightId ? null : light.id)}>
+                                            <div className="flex items-center justify-between w-full">
+                                                <span>Light {i + 1}</span>
+                                                <div className="flex items-center gap-1 pr-3" onClick={(e) => e.stopPropagation()}>
+                                                    <Button variant="ghost" size="icon" className="h-6 w-6" onClick={() => toggleLightVisibility(light.id)}>
+                                                        {light.visible ? <Eye className="h-4 w-4" /> : <EyeOff className="h-4 w-4" />}
+                                                    </Button>
+                                                    <Button variant="ghost" size="icon" className="h-6 w-6" onClick={() => cloneLight(light.id)}>
+                                                        <Clone className="h-3 w-3" />
+                                                    </Button>
+                                                    <Button variant="ghost" size="icon" className="h-6 w-6 hover:text-destructive" onClick={() => removeLight(light.id)}>
+                                                        <Trash2 className="h-3 w-3" />
+                                                    </Button>
+                                                </div>
+                                            </div>
+                                        </AccordionTrigger>
+                                        <AccordionContent>
+                                            <LightSettings light={light} onLightChange={onLightChange} onFocus={onFocusLight} />
+                                        </AccordionContent>
+                                    </AccordionItem>
+                                ))}
+                            </Accordion>
+                            <div className="flex justify-end pt-2">
+                                <Button size="icon" className="text-xs h-6 w-6" onClick={addLight} disabled={lights.length >= 5}>
+                                    <Plus className="w-3 h-3" />
+                                </Button>
+                            </div>
+                        </>
+                    )}
+                </div>
+
+                <Separator className="bg-white/20" />
+
+                {/* Environment */}
+                <div className="space-y-2">
+                    <div className="flex items-center justify-between">
+                        <h3 className="text-sm font-semibold">Environment</h3>
+                        <Switch checked={environmentEnabled} onCheckedChange={onEnvironmentEnabledChange} />
+                    </div>
+                    {environmentEnabled && (
+                        <div className="space-y-2">
+                            <div className="flex items-center justify-between text-xs">
+                                <label>Bloom</label>
+                                <Switch checked={bloomEnabled} onCheckedChange={onBloomEnabledChange} />
+                            </div>
+                            <div className="flex items-center justify-between text-xs">
+                                <label>Background</label>
+                                <Select value={bgType} onValueChange={onBgTypeChange as any}>
+                                    <SelectTrigger className="w-1/2 h-6 text-xs bg-white/10 border-white/30"><SelectValue /></SelectTrigger>
+                                    <SelectContent>
+                                        <SelectItem value="color">Color</SelectItem>
+                                        <SelectItem value="gradient">Gradient</SelectItem>
+                                        <SelectItem value="image">Image</SelectItem>
+                                    </SelectContent>
+                                </Select>
+                            </div>
+                            {bgType === "color" && (
+                                <div className="flex items-center justify-between text-xs">
+                                    <label>Color</label>
+                                    <input type="color" value={bgColor1} onChange={(e) => onBgColor1Change(e.target.value)} className="w-6 h-6 p-0 bg-transparent border-none" />
+                                </div>
+                            )}
+                            {bgType === "gradient" && (
+                                <>
+                                    <div className="flex items-center justify-between text-xs">
+                                        <label>Top Color</label>
+                                        <input type="color" value={bgColor1} onChange={(e) => onBgColor1Change(e.target.value)} className="w-6 h-6 p-0 bg-transparent border-none" />
+                                    </div>
+                                    <div className="flex items-center justify-between text-xs">
+                                        <label>Bottom Color</label>
+                                        <input type="color" value={bgColor2} onChange={(e) => onBgColor2Change(e.target.value)} className="w-6 h-6 p-0 bg-transparent border-none" />
+                                    </div>
+                                </>
+                            )}
+                            {bgType === "image" && (
+                                <div className="flex items-center justify-between text-xs">
+                                    <label>Image</label>
+                                    <Button size="icon" className="text-xs h-6 w-6" onClick={() => bgImageInputRef.current?.click()}><Upload className="h-3 w-3" /></Button>
+                                    <input type="file" ref={bgImageInputRef} className="hidden" accept="image/*" onChange={handleBgImageUpload} />
+                                </div>
+                            )}
+                        </div>
+                    )}
+                </div>
+            </div>
+        </div>
+    )
+}
+
+
+=== C:\Users\Shadow\Documents\GitHub\space.iverfinne.no\components\gallery\ui-components.tsx ===
+
+"use client"
+
+import { Button } from "@/components/ui/button"
+import { ContextMenu, ContextMenuContent, ContextMenuItem, ContextMenuTrigger } from "@/components/ui/context-menu"
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog"
+import {
+    DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuPortal, DropdownMenuSub, DropdownMenuSubContent,
+    DropdownMenuSubTrigger, DropdownMenuTrigger
+} from "@/components/ui/dropdown-menu"
+import { Input } from "@/components/ui/input"
+import { Textarea } from "@/components/ui/textarea"
+import type { Folder, GalleryItem } from "@/types"
+import { FolderIcon, FolderSymlink, Globe, Lock, MoreVertical, Pencil, Trash2 } from "lucide-react"
+import React, { useState } from "react"
+import { toast } from "sonner"
+
+// ---- shared menu ----
+interface MenuItemsProps {
+    onRename: () => void
+    onDelete: () => void
+    onMove: (targetFolderId: string | null) => void
+    onSetPublic: (isPublic: boolean) => void
+    allFolders?: Folder[]
+    currentItem: GalleryItem
+}
+
+const MoveToList = ({ onMove, allFolders, currentItem, Item }: Omit<MenuItemsProps, "onRename" | "onDelete" | "onSetPublic"> & { Item: any }) => (
+    <>
+        {currentItem.folder_id !== null && (
+            <Item onSelect={() => onMove(null)}>
+                <FolderIcon className="mr-2 h-4 w-4" />
+                <span>Assets (Root)</span>
+            </Item>
+        )}
+        {allFolders?.filter((f) => f.id !== currentItem.id && f.id !== currentItem.folder_id).map((folder) => (
+            <Item key={folder.id} onSelect={() => onMove(folder.id)}>
+                <FolderIcon className="mr-2 h-4 w-4" />
+                <span>{folder.name}</span>
+            </Item>
+        ))}
+    </>
+)
+
+const FullMenu = ({ onRename, onDelete, onMove, onSetPublic, allFolders, currentItem, Item }: MenuItemsProps & { Item: any }) => (
+    <>
+        <Item onSelect={onRename}><Pencil className="mr-2 h-4 w-4" /><span>Rename</span></Item>
+        <DropdownMenuSub>
+            <DropdownMenuSubTrigger><FolderSymlink className="mr-2 h-4 w-4" /><span>Move to...</span></DropdownMenuSubTrigger>
+            <DropdownMenuPortal>
+                <DropdownMenuSubContent><MoveToList onMove={onMove} allFolders={allFolders} currentItem={currentItem} Item={DropdownMenuItem} /></DropdownMenuSubContent>
+            </DropdownMenuPortal>
+        </DropdownMenuSub>
+        <Item onSelect={() => onSetPublic(!currentItem.is_public)}>
+            {currentItem.is_public ? <Lock className="mr-2 h-4 w-4" /> : <Globe className="mr-2 h-4 w-4" />}
+            <span>Make {currentItem.is_public ? "Private" : "Public"}</span>
+        </Item>
+        <Item onSelect={onDelete} className="text-destructive focus:text-destructive"><Trash2 className="mr-2 h-4 w-4" /><span>Delete</span></Item>
+    </>
+)
+
+export function ItemContextMenu({ children, item, onRename, onDelete, onMove, onSetPublic, allFolders }: { children: React.ReactNode } & MenuItemsProps) {
+    return (
+        <ContextMenu>
+            <ContextMenuTrigger className="w-full h-full" onContextMenu={(e) => e.stopPropagation()}>
+                <div className="relative group w-full h-full">
+                    {children}
+                    <div className="absolute top-2 right-2">
+                        <DropdownMenu>
+                            <DropdownMenuTrigger asChild>
+                                <Button variant="ghost" size="icon"
+                                    className="h-7 w-7 opacity-0 group-hover:opacity-100 focus-visible:opacity-100 bg-black/30 hover:bg-black/50 text-white hover:text-white"
+                                    onClick={(e) => e.stopPropagation()} onContextMenu={(e) => e.stopPropagation()}>
+                                    <MoreVertical className="h-4 w-4" />
+                                </Button>
+                            </DropdownMenuTrigger>
+                            <DropdownMenuContent onClick={(e) => e.stopPropagation()}>
+                                <FullMenu {...{ onRename, onDelete, onMove, onSetPublic, allFolders, currentItem: item }} Item={DropdownMenuItem} />
+                            </DropdownMenuContent>
+                        </DropdownMenu>
+                    </div>
+                </div>
+            </ContextMenuTrigger>
+            <ContextMenuContent onClick={(e) => e.stopPropagation()}>
+                <MoveToList onMove={onMove} allFolders={allFolders} currentItem={item} Item={ContextMenuItem} />
+            </ContextMenuContent>
+        </ContextMenu>
+    )
+}
+
+// ---- dialogs ----
+export function NewFolderDialog({ open, onOpenChange, onCreate }: { open: boolean; onOpenChange: (o: boolean) => void; onCreate: (name: string) => void }) {
+    const [name, setName] = useState("")
+    return (
+        <Dialog open={open} onOpenChange={onOpenChange}>
+            <DialogContent className="bg-black/50 backdrop-blur-sm border-white/20 text-white">
+                <DialogHeader><DialogTitle>New Folder</DialogTitle></DialogHeader>
+                <Input value={name} onChange={(e) => setName(e.target.value)} placeholder="Enter folder name"
+                    onKeyDown={(e) => e.key === "Enter" && name && onCreate(name)} className="bg-white/10 border-white/20" />
+                <DialogFooter><Button onClick={() => name && onCreate(name)} disabled={!name}>Create</Button></DialogFooter>
+            </DialogContent>
+        </Dialog>
+    )
+}
+
+export function RenameDialog({ item, onOpenChange, onRename }: { item: GalleryItem; onOpenChange: (o: boolean) => void; onRename: (name: string) => void }) {
+    const [name, setName] = useState(item.name)
+    return (
+        <Dialog open={true} onOpenChange={onOpenChange}>
+            <DialogContent className="bg-black/50 backdrop-blur-sm border-white/20 text-white">
+                <DialogHeader><DialogTitle>Rename {item.type}</DialogTitle></DialogHeader>
+                <Input value={name} onChange={(e) => setName(e.target.value)} onKeyDown={(e) => e.key === "Enter" && name && onRename(name)} className="bg-white/10 border-white/20" />
+                <DialogFooter><Button onClick={() => name && onRename(name)} disabled={!name}>Save</Button></DialogFooter>
+            </DialogContent>
+        </Dialog>
+    )
+}
+
+export function FolderDescriptionDialog({ folder, open, onOpenChange, onSave }: {
+    folder: Folder; open: boolean; onOpenChange: (o: boolean) => void; onSave: (description: string) => void
+}) {
+    const [description, setDescription] = useState(folder.description || "")
+    const words = description.trim() ? description.trim().split(/\s+/).length : 0
+    const handleSave = () => { if (words > 150) toast.error("Description cannot exceed 150 words."); else onSave(description) }
+    return (
+        <Dialog open={open} onOpenChange={onOpenChange}>
+            <DialogContent className="bg-black/50 backdrop-blur-sm border-white/20 text-white">
+                <DialogHeader>
+                    <DialogTitle>Edit Description for "{folder.name}"</DialogTitle>
+                    <DialogDescription className="text-gray-400">Add a description or comma-separated tags. Used for searching models in this folder.</DialogDescription>
+                </DialogHeader>
+                <Textarea value={description} onChange={(e) => setDescription(e.target.value)} placeholder="e.g. sci-fi, characters, hard-surface"
+                    className="bg-white/10 border-white/20 min-h-[120px]" rows={5} />
+                <div className={`text-right text-sm ${words > 150 ? "text-destructive" : "text-muted-foreground"}`}>{words} / 150 words</div>
+                <DialogFooter><Button variant="secondary" onClick={() => onOpenChange(false)}>Cancel</Button><Button onClick={handleSave} disabled={words > 150}>Save</Button></DialogFooter>
+            </DialogContent>
+        </Dialog>
+    )
+}
+
+
+=== C:\Users\Shadow\Documents\GitHub\space.iverfinne.no\components\gallery\viewer-components.tsx ===
+
+﻿// components/gallery/viewer-components.tsx
+"use client"
+import { kelvinToRgb } from "@/lib/utils"
+import type { Light } from "@/types"
+import { Html, SpotLight, useGLTF, useProgress } from "@react-three/drei"
+import { useThree } from "@react-three/fiber"
+import { forwardRef, useEffect, useImperativeHandle, useMemo, useRef } from "react"
+import { toast } from "sonner"
+import * as THREE from "three"
+
+export function Loader() {
+    const { progress } = useProgress()
+    return <Html center><div className="text-white text-lg">{progress.toFixed(2)} % loaded</div></Html>
+}
+
+const mkWhite = (m: THREE.Material) =>
+    m instanceof THREE.MeshStandardMaterial ? Object.assign(m.clone(), { color: new THREE.Color("white"), map: null }) : new THREE.MeshStandardMaterial({ color: "white" })
+const mkNormal = (m: THREE.Material) =>
+    m instanceof THREE.MeshStandardMaterial && m.normalMap ? new THREE.MeshBasicMaterial({ map: m.normalMap }) : new THREE.MeshNormalMaterial()
+
+export const ModelViewer = forwardRef<THREE.Group, { modelUrl: string; materialMode: "pbr" | "normal" | "white" }>(
+    ({ modelUrl, materialMode }, ref) => {
+        const gltf = useGLTF(modelUrl)
+        const scene = useMemo(() => gltf.scene.clone(true), [gltf.scene])
+        const originals = useRef(new Map<string, THREE.Material | THREE.Material[]>()),
+            whites = useRef(new Map<string, THREE.Material | THREE.Material[]>()),
+            normals = useRef(new Map<string, THREE.Material | THREE.Material[]>())
+
+        useEffect(() => {
+            // center once + cache variants
+            const box = new THREE.Box3().setFromObject(scene), c = new THREE.Vector3()
+            box.getCenter(c); scene.position.sub(c)
+            scene.traverse((ch: any) => {
+                if (!ch?.isMesh) return
+                const mesh = ch as THREE.Mesh
+                mesh.castShadow = mesh.receiveShadow = true
+                const base = mesh.material
+                originals.current.set(mesh.uuid, base)
+                const w = Array.isArray(base) ? base.map(mkWhite) : mkWhite(base)
+                const n = Array.isArray(base) ? base.map(mkNormal) : mkNormal(base)
+                whites.current.set(mesh.uuid, w); normals.current.set(mesh.uuid, n)
+            })
+        }, [scene])
+
+        useEffect(() => {
+            scene.traverse((ch: any) => {
+                if (!ch?.isMesh) return
+                const mesh = ch as THREE.Mesh
+                mesh.material =
+                    materialMode === "white" ? whites.current.get(mesh.uuid)! :
+                        materialMode === "normal" ? normals.current.get(mesh.uuid)! :
+                            originals.current.get(mesh.uuid)!
+            })
+        }, [scene, materialMode])
+
+        return <primitive ref={ref} object={scene} />
+    }
+)
+ModelViewer.displayName = "ModelViewer"
+
+export function SpotLightInScene({ light }: { light: Light }) {
+    const target = useRef(new THREE.Object3D())
+    const { r, g, b } = kelvinToRgb(light.kelvin)
+    const color = useMemo(() => new THREE.Color(r, g, b), [r, g, b])
+
+    useEffect(() => { target.current.position.set(...light.targetPosition) }, [light.targetPosition])
+
+    if (!light.visible) return null
+    return (
+        <>
+            <SpotLight
+                position={light.position}
+                target={target.current}
+                color={color}
+                intensity={light.intensity}
+                angle={THREE.MathUtils.degToRad(light.angle)}
+                penumbra={light.penumbra}
+                decay={light.decay}
+                castShadow
+                shadow-mapSize={[1024, 1024]}
+                shadow-bias={-0.00015}
+                distance={0} // 0 = no cutoff; use angle/decay instead
+            />
+            <primitive object={target.current} />
+        </>
+    )
+}
+
+export const CaptureController = forwardRef<{ capture: () => Promise<File | null> }, { modelRef: React.RefObject<THREE.Group> }>(
+    ({ modelRef }, ref) => {
+        const { gl, scene, camera } = useThree()
+        useImperativeHandle(ref, () => ({
+            async capture() {
+                if (!modelRef.current) { toast.error("Model not loaded yet."); return null }
+                const bg = scene.background; scene.background = null; gl.render(scene, camera)
+
+                const box = new THREE.Box3().setFromObject(modelRef.current), v = new THREE.Vector3()
+                const pts = [
+                    v.set(box.min.x, box.min.y, box.min.z).clone(), v.set(box.min.x, box.min.y, box.max.z).clone(),
+                    v.set(box.min.x, box.max.y, box.min.z).clone(), v.set(box.min.x, box.max.y, box.max.z).clone(),
+                    v.set(box.max.x, box.min.y, box.min.z).clone(), v.set(box.max.x, box.min.y, box.max.z).clone(),
+                    v.set(box.max.x, box.max.y, box.min.z).clone(), v.set(box.max.x, box.max.y, box.max.z).clone(),
+                ]
+                let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity
+                for (const p of pts) {
+                    const s = p.clone().project(camera)
+                    const x = ((s.x + 1) / 2) * gl.domElement.width, y = (-(s.y - 1) / 2) * gl.domElement.height
+                    minX = Math.min(minX, x); maxX = Math.max(maxX, x); minY = Math.min(minY, y); maxY = Math.max(maxY, y)
+                }
+                const bw = maxX - minX, bh = maxY - minY
+                if (bw <= 0 || bh <= 0) { toast.error("Could not determine model bounds for capture."); scene.background = bg; return null }
+                const size = Math.max(bw, bh) * 1.2, cx = minX + bw / 2, cy = minY + bh / 2
+                const sx = cx - size / 2, sy = cy - size / 2
+
+                const tmp = document.createElement("canvas"); tmp.width = 512; tmp.height = 512
+                const ctx = tmp.getContext("2d"); if (!ctx) { toast.error("Canvas context failed."); scene.background = bg; return null }
+                ctx.drawImage(gl.domElement, sx, sy, size, size, 0, 0, 512, 512)
+                scene.background = bg
+
+                const b64 = tmp.toDataURL("image/png")
+                const [meta, data] = b64.split(",")
+                const mime = meta.match(/:(.*?);/)?.[1] ?? "image/png"
+                const bin = atob(data), buf = new Uint8Array(bin.length); for (let i = 0; i < bin.length; i++) buf[i] = bin.charCodeAt(i)
+                return new File([buf], `thumbnail-${Date.now()}.png`, { type: mime })
+            },
+        }))
+        return null
+    }
+)
+CaptureController.displayName = "CaptureController"
+
+
+=== C:\Users\Shadow\Documents\GitHub\space.iverfinne.no\hooks\use-gallery-data.ts ===
+
+"use client"
+
+import type { Folder, GalleryContents } from "@/types"
+import { useEffect, useState } from "react"
+import { toast } from "sonner"
+import useSWR from "swr"
+
+const fetcher = (url: string) => fetch(url).then((res) => res.json())
+
+export function useGalleryData(folderId: string | null, sortBy: string, sortOrder: string) {
+    const galleryUrl = `/api/gallery?folderId=${folderId || ""}&sortBy=${sortBy}&sortOrder=${sortOrder}`
+    const { data: gallery, error, isLoading, mutate } = useSWR<GalleryContents>(galleryUrl, fetcher)
+    const { data: allFolders } = useSWR<Folder[]>("/api/folders/all", fetcher)
+    const { data: breadcrumbData, error: breadcrumbError } = useSWR<{ id: string; name: string }[]>(
+        folderId ? `/api/folders/${folderId}/breadcrumbs` : null,
+        fetcher,
+    )
+
+    const [breadcrumbs, setBreadcrumbs] = useState<{ id: string | null; name: string }[]>([{ id: null, name: "Assets" }])
+
+    useEffect(() => {
+        if (breadcrumbError) {
+            toast.error("Could not load folder path. Please ensure your database schema is up to date.")
+        }
+        if (folderId === null) {
+            setBreadcrumbs([{ id: null, name: "Assets" }])
+        } else if (breadcrumbData) {
+            setBreadcrumbs([{ id: null, name: "Assets" }, ...breadcrumbData])
+        }
+    }, [folderId, breadcrumbData, breadcrumbError])
+
+    return { gallery, allFolders, breadcrumbs, error, isLoading, mutateGallery: mutate }
+}
+
+
+=== C:\Users\Shadow\Documents\GitHub\space.iverfinne.no\hooks\use-item-selection.ts ===
+
+"use client"
+
+import type { GalleryItem } from "@/types"
+import { useRef, useState } from "react"
+
+export function useItemSelection(filteredItems: GalleryItem[]) {
+    const [selectedItems, setSelectedItems] = useState<Set<string>>(new Set())
+    const lastSelectedItem = useRef<string | null>(null)
+
+    const handleItemClick = (e: React.MouseEvent, item: GalleryItem) => {
+        e.stopPropagation()
+        const newSelectedItems = new Set(selectedItems)
+
+        if (e.shiftKey && lastSelectedItem.current) {
+            const lastIndex = filteredItems.findIndex((i) => i.id === lastSelectedItem.current)
+            const currentIndex = filteredItems.findIndex((i) => i.id === item.id)
+            const [start, end] = [lastIndex, currentIndex].sort((a, b) => a - b)
+            for (let i = start; i <= end; i++) {
+                newSelectedItems.add(filteredItems[i].id)
+            }
+        } else if (e.metaKey || e.ctrlKey) {
+            newSelectedItems.has(item.id) ? newSelectedItems.delete(item.id) : newSelectedItems.add(item.id)
+        } else {
+            if (newSelectedItems.size === 1 && newSelectedItems.has(item.id)) {
+                newSelectedItems.clear()
+            } else {
+                newSelectedItems.clear()
+                newSelectedItems.add(item.id)
+            }
+        }
+
+        setSelectedItems(newSelectedItems)
+        lastSelectedItem.current = item.id
+    }
+
+    return { selectedItems, setSelectedItems, handleItemClick }
+}
+
+
+=== C:\Users\Shadow\Documents\GitHub\space.iverfinne.no\hooks\use-mobile.tsx ===
+
+"use client"
+
+import * as React from "react"
+
+const MOBILE_BREAKPOINT = 768
+
+export function useIsMobile() {
+  const [isMobile, setIsMobile] = React.useState<boolean | undefined>(undefined)
+
+  React.useEffect(() => {
+    const mql = window.matchMedia(`(max-width: ${MOBILE_BREAKPOINT - 1}px)`)
+    const onChange = () => {
+      setIsMobile(window.innerWidth < MOBILE_BREAKPOINT)
+    }
+    mql.addEventListener("change", onChange)
+    setIsMobile(window.innerWidth < MOBILE_BREAKPOINT)
+    return () => mql.removeEventListener("change", onChange)
+  }, [])
+
+  return !!isMobile
+}
+
+
+=== C:\Users\Shadow\Documents\GitHub\space.iverfinne.no\hooks\use-viewer-state.ts ===
+
+﻿"use client"
+
+import type { Light, Model, ViewSettings } from "@/types"
+import { useCallback, useState } from "react"
+import { toast } from "sonner"
+
+const defaultLights: Light[] = [
+    {
+        id: Date.now(),
+        visible: true,
+        position: [-2, 3, 2],
+        targetPosition: [0, 0, 0],
+        intensity: 3,
+        kelvin: 5500,
+        decay: 1,
+        angle: 45,
+        penumbra: 0.5,
+        volumeVisible: false,
+    },
+    {
+        id: Date.now() + 1,
+        visible: true,
+        position: [2, 2, -1],
+        targetPosition: [0, 0, 0],
+        intensity: 2,
+        kelvin: 4000,
+        decay: 1,
+        angle: 60,
+        penumbra: 0.3,
+        volumeVisible: false,
+    },
+]
+
+export function useViewerState(selectedModel: Model | undefined) {
+    const [materialMode, setMaterialMode] = useState<"pbr" | "normal" | "white">("white")
+    const [lightsEnabled, setLightsEnabled] = useState(true)
+    const [environmentEnabled, setEnvironmentEnabled] = useState(false)
+    const [bloomEnabled, setBloomEnabled] = useState(true)
+    const [ssaoEnabled, setSsaoEnabled] = useState(true)
+    const [bgType, setBgType] = useState<"color" | "gradient" | "image">("color")
+    const [bgColor1, setBgColor1] = useState("#000000")
+    const [bgColor2, setBgColor2] = useState("#1a1a1a")
+    const [bgImage, setBgImage] = useState<string | null>(null)
+    const [lights, setLights] = useState<Light[]>(defaultLights)
+    const [selectedLightId, setSelectedLightId] = useState<number | null>(null)
+    const [currentPresetIndex, setCurrentPresetIndex] = useState(-1)
+    const [fieldOfView, setFieldOfView] = useState(50)
+
+    const resetViewSettings = useCallback((settings: ViewSettings | null | undefined) => {
+        setLights(
+            settings?.lights?.map((l, i) => ({ ...l, id: Date.now() + i, visible: true })) ?? defaultLights,
+        )
+        setLightsEnabled(settings?.lightsEnabled ?? true)
+        setEnvironmentEnabled(settings?.environmentEnabled ?? false)
+        setBloomEnabled(settings?.bloomEnabled ?? true)
+        setSsaoEnabled(settings?.ssaoEnabled ?? true)
+        setBgType(settings?.bgType ?? "color")
+        setBgColor1(settings?.bgColor1 ?? "#000000")
+        setBgColor2(settings?.bgColor2 ?? "#1a1a1a")
+        setBgImage(settings?.bgImage ?? null)
+        setFieldOfView(settings?.fieldOfView ?? 50)
+        setMaterialMode(settings?.materialMode ?? "white")
+        setSelectedLightId(null)
+        setCurrentPresetIndex(-1)
+    }, [])
+
+    const randomizeLights = useCallback(() => {
+        // Generate a classic 3-point lighting setup within a controlled range
+        const keyLight: Light = {
+            id: Date.now(),
+            visible: true,
+            position: [-1 - Math.random(), 1 + Math.random(), 1.5 + Math.random()],
+            targetPosition: [0, 0.5, 0],
+            intensity: 15 + Math.random() * 20, // Strong key light
+            kelvin: 5500 + Math.random() * 1000, // Neutral to cool
+            decay: 1.5,
+            angle: 35 + Math.random() * 10,
+            penumbra: 0.3 + Math.random() * 0.2,
+            volumeVisible: false,
+        }
+
+        const fillLight: Light = {
+            id: Date.now() + 1,
+            visible: true,
+            position: [1 + Math.random(), 0.5 + Math.random(), 1 + Math.random()],
+            targetPosition: [0, 0.5, 0],
+            intensity: 5 + Math.random() * 10, // Softer fill
+            kelvin: 3500 + Math.random() * 1000, // Neutral to warm
+            decay: 2,
+            angle: 55 + Math.random() * 10,
+            penumbra: 0.6 + Math.random() * 0.2,
+            volumeVisible: false,
+        }
+
+        const rimLight: Light = {
+            id: Date.now() + 2,
+            visible: true,
+            position: [(Math.random() - 0.5) * 4, 1 + Math.random() * 2, -2 - Math.random()],
+            targetPosition: [0, 0, 0],
+            intensity: 20 + Math.random() * 20, // Strong rim/backlight
+            kelvin: 6500 + Math.random() * 1500, // Often cooler
+            decay: 1.8,
+            angle: 50 + Math.random() * 15,
+            penumbra: 0.5 + Math.random() * 0.3,
+            volumeVisible: false,
+        }
+
+        setLights([keyLight, fillLight, rimLight])
+        toast.success("Lights Randomized!")
+    }, [])
+
+    return {
+        materialMode,
+        setMaterialMode,
+        lightsEnabled,
+        onLightsEnabledChange: setLightsEnabled,
+        environmentEnabled,
+        onEnvironmentEnabledChange: setEnvironmentEnabled,
+        bloomEnabled,
+        onBloomEnabledChange: setBloomEnabled,
+        ssaoEnabled,
+        onSsaoEnabledChange: setSsaoEnabled,
+        bgType,
+        onBgTypeChange: setBgType,
+        bgColor1,
+        onBgColor1Change: setBgColor1,
+        bgColor2,
+        onBgColor2Change: setBgColor2,
+        bgImage,
+        onBgImageChange: setBgImage,
+        lights,
+        setLights,
+        selectedLightId,
+        setSelectedLightId,
+        fieldOfView,
+        onFieldOfViewChange: setFieldOfView,
+        resetViewSettings,
+        randomizeLights,
+    }
+}
+
+
+=== C:\Users\Shadow\Documents\GitHub\space.iverfinne.no\lib\gallery-actions.ts ===
+
+import type { GalleryItem, Model, ViewSettings } from "@/types"
+import { upload } from "@vercel/blob/client"
+import { toast } from "sonner"
+import type { KeyedMutator } from "swr"
+
+type MutateGallery = KeyedMutator<any>
+
+export async function handleUpload(
+    files: FileList | null,
+    currentFolderId: string | null,
+    mutateGallery: MutateGallery,
+    updateQuery: (params: Record<string, string | null>) => void,
+) {
+    if (!files || files.length === 0) return
+    const fileArray = Array.from(files)
+    const uploadedModels: Model[] = []
+
+    const uploadToast = toast.loading(`Uploading ${fileArray.length} file(s)...`)
+
+    await Promise.all(
+        fileArray.map(async (file) => {
+            if (!file.name.endsWith(".glb")) {
+                toast.error(`Skipping non-GLB file: ${file.name}`)
+                return
+            }
+            try {
+                const newBlob = await upload(file.name.replace(/\s+/g, "_"), file, {
+                    access: "public",
+                    handleUploadUrl: "/api/upload",
+                })
+
+                const res = await fetch("/api/models", {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({
+                        name: file.name.replace(/\.glb$/, ""),
+                        model_url: newBlob.url,
+                        thumbnail_url: `/placeholder.svg?width=400&height=400&query=${encodeURIComponent(
+                            file.name.replace(/\.glb$/, ""),
+                        )}`,
+                        folder_id: currentFolderId,
+                    }),
+                })
+
+                if (!res.ok) throw new Error(`Failed to create database record for ${file.name}`)
+                const newModel = await res.json()
+                uploadedModels.push(newModel)
+
+                toast.success(`Uploaded ${file.name}`, { id: uploadToast, duration: 2000 })
+            } catch (error) {
+                toast.error(`Failed to upload ${file.name}`, { id: uploadToast })
+            }
+        }),
+    )
+
+    mutateGallery()
+    if (uploadedModels.length === 1) {
+        updateQuery({ modelId: uploadedModels[0].id })
+    }
+}
+
+export async function handleThumbnailUpload(
+    file: File,
+    modelId: string,
+    mutateGallery: MutateGallery,
+    mutateSelectedModel: KeyedMutator<Model>,
+) {
+    try {
+        toast.info(`Uploading thumbnail...`)
+        const pathname = `thumbnails/${modelId}.${file.name.split(".").pop()}`
+        const newBlob = await upload(pathname, file, {
+            access: "public",
+            handleUploadUrl: "/api/upload",
+            clientPayload: JSON.stringify({ isThumbnail: true }),
+        })
+
+        await fetch(`/api/models/${modelId}`, {
+            method: "PATCH",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ thumbnail_url: newBlob.url }),
+        })
+
+        await mutateGallery()
+        await mutateSelectedModel()
+        toast.success("Thumbnail updated successfully!")
+    } catch (error) {
+        console.error("Thumbnail upload failed:", error)
+        toast.error(error instanceof Error ? error.message : "Failed to upload thumbnail.")
+    }
+}
+
+export async function createFolder(name: string, parent_id: string | null, mutateGallery: MutateGallery) {
+    await fetch("/api/folders", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name, parent_id }),
+    })
+    toast.success(`Folder "${name}" created`)
+    mutateGallery()
+}
+
+export async function renameItem(
+    item: GalleryItem,
+    newName: string,
+    mutateGallery: MutateGallery,
+    mutateSelectedModel?: KeyedMutator<Model>,
+) {
+    const url = item.type === "folder" ? `/api/folders/${item.id}` : `/api/models/${item.id}`
+    await fetch(url, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name: newName }),
+    })
+    toast.success("Renamed successfully")
+    mutateGallery()
+    if (item.type === "model" && mutateSelectedModel) mutateSelectedModel()
+}
+
+async function performBulkAction(
+    items: GalleryItem[],
+    action: (item: GalleryItem) => Promise<Response>,
+    successMessage: string,
+    mutators: { closeViewer: () => void; mutateGallery: MutateGallery },
+) {
+    if (items.length === 0) return;
+    const toastId = toast.loading(`Processing ${items.length} item(s)...`);
+
+    const results = await Promise.allSettled(items.map(action));
+
+    let successCount = 0;
+    let failureCount = 0;
+    results.forEach(result => {
+        if (result.status === 'fulfilled' && result.value.ok) {
+            successCount++;
+        } else {
+            failureCount++;
+        }
+    });
+
+    if (failureCount > 0) {
+        toast.error(`${successCount} ${successMessage}, ${failureCount} failed.`, { id: toastId });
+    } else {
+        toast.success(`${successCount} ${successMessage}.`, { id: toastId });
+    }
+
+    if (items.some(item => item.type === 'model')) {
+        mutators.closeViewer();
+    }
+    mutators.mutateGallery();
+}
+
+
+export async function deleteItems(items: GalleryItem[], closeViewer: () => void, mutateGallery: MutateGallery) {
+    const deleteAction = (item: GalleryItem) => {
+        const url = item.type === "folder" ? `/api/folders/${item.id}` : `/api/models/${item.id}`;
+        return fetch(url, { method: "DELETE" });
+    };
+    await performBulkAction(items, deleteAction, "item(s) deleted", { closeViewer, mutateGallery });
+}
+
+export async function moveItems(
+    items: GalleryItem[],
+    targetFolderId: string | null,
+    currentFolderId: string | null,
+    closeViewer: () => void,
+    mutateGallery: MutateGallery,
+) {
+    const moveAction = (item: GalleryItem) => {
+        const url = item.type === "folder" ? `/api/folders/${item.id}` : `/api/models/${item.id}`;
+        const body = item.type === "folder" ? { parent_id: targetFolderId } : { folder_id: targetFolderId };
+        return fetch(url, {
+            method: "PATCH",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(body),
+        });
+    };
+
+    const shouldCloseViewer = items.some(item => item.type === 'model') && targetFolderId !== currentFolderId;
+    await performBulkAction(items, moveAction, "item(s) moved", { closeViewer: shouldCloseViewer ? closeViewer : () => { }, mutateGallery });
+}
+
+
+export async function setItemPublic(
+    items: GalleryItem[],
+    isPublic: boolean,
+    mutateGallery: MutateGallery,
+    mutateSelectedModel?: KeyedMutator<Model>,
+) {
+    const setPublicAction = (item: GalleryItem) => {
+        const url = item.type === "folder" ? `/api/folders/${item.id}` : `/api/models/${item.id}`;
+        return fetch(url, {
+            method: "PATCH",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ is_public: isPublic }),
+        });
+    };
+    await performBulkAction(items, setPublicAction, `item(s) set to ${isPublic ? "public" : "private"}`, { closeViewer: () => { }, mutateGallery });
+    if (items.some(item => item.type === 'model') && mutateSelectedModel) {
+        mutateSelectedModel();
+    }
+}
+
+
+export async function saveViewSettings(modelId: string, settings: ViewSettings) {
+    await fetch(`/api/models/${modelId}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ view_settings: settings }),
+    })
+    toast.success("Default view saved!")
+}
+
+export async function deleteViewSettings(modelId: string) {
+    await fetch(`/api/models/${modelId}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ view_settings: null }),
+    })
+    toast.success("Saved view has been deleted.")
+}
+
+
+=== C:\Users\Shadow\Documents\GitHub\space.iverfinne.no\lib\lighting-presets.ts ===
+
+import type { Light } from "@/types"
+
+type LightPreset = Omit<Light, "id" | "visible">
+
+const defaultStudioLights: LightPreset[] = [
+  {
+    position: [5, 5, 5],
+    targetPosition: [0, 0, 0],
+    intensity: 10.0,
+    kelvin: 6500,
+    decay: 2,
+    angle: 30,
+    penumbra: 0.2,
+  },
+  {
+    position: [-5, 5, 5],
+    targetPosition: [0, 0, 0],
+    intensity: 10.0,
+    kelvin: 9600,
+    decay: 2,
+    angle: 30,
+    penumbra: 0.2,
+  },
+  {
+    position: [0, 5, -5],
+    targetPosition: [0, 0, 0],
+    intensity: 9.1,
+    kelvin: 2600,
+    decay: 2,
+    angle: 30,
+    penumbra: 0.2,
+  },
+]
+
+export const lightingPresets: { name: string; lights: LightPreset[] }[] = [
+  {
+    name: "Default Studio",
+    lights: defaultStudioLights,
+  },
+  {
+    name: "Sunset",
+    lights: [
+      {
+        position: [-10, 5, 0],
+        targetPosition: [0, 0, 0],
+        intensity: 20,
+        kelvin: 2000,
+        decay: 1.5,
+        angle: 60,
+        penumbra: 0.5,
+      },
+      {
+        position: [5, 3, 8],
+        targetPosition: [0, 0, 0],
+        intensity: 5,
+        kelvin: 8000,
+        decay: 2,
+        angle: 45,
+        penumbra: 0.3,
+      },
+    ],
+  },
+  {
+    name: "High Key",
+    lights: [
+      {
+        position: [0, 10, 0],
+        targetPosition: [0, 0, 0],
+        intensity: 15,
+        kelvin: 7500,
+        decay: 1,
+        angle: 90,
+        penumbra: 1,
+      },
+      {
+        position: [8, 2, 4],
+        targetPosition: [0, 0, 0],
+        intensity: 10,
+        kelvin: 6500,
+        decay: 2,
+        angle: 50,
+        penumbra: 0.8,
+      },
+      {
+        position: [-8, 2, -4],
+        targetPosition: [0, 0, 0],
+        intensity: 10,
+        kelvin: 6500,
+        decay: 2,
+        angle: 50,
+        penumbra: 0.8,
+      },
+    ],
+  },
+  {
+    name: "Cinematic",
+    lights: [
+      {
+        position: [8, 4, -6],
+        targetPosition: [0, 1, 0],
+        intensity: 18,
+        kelvin: 3200,
+        decay: 1.8,
+        angle: 35,
+        penumbra: 0.6,
+      },
+      {
+        position: [-6, 2, 8],
+        targetPosition: [0, 1, 0],
+        intensity: 12,
+        kelvin: 5600,
+        decay: 2,
+        angle: 70,
+        penumbra: 0.4,
+      },
+    ],
+  },
+]
+
+
+=== C:\Users\Shadow\Documents\GitHub\space.iverfinne.no\lib\supabase-server.ts ===
+
+import { createClient } from "@supabase/supabase-js"
+
+// These variables are available in the Vercel environment
+const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL
+const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY
+
+if (!supabaseUrl || !supabaseServiceKey) {
+  // This check is important for local development and debugging.
+  // In production on Vercel, these variables should be set.
+  console.warn(
+    "Supabase URL or Service Role Key is not defined in environment variables. Database operations will likely fail.",
+  )
+}
+
+// Note: this client is for server-side use only, as it uses the service_role key.
+// It bypasses Row Level Security (RLS).
+export const supabaseServer = createClient(supabaseUrl!, supabaseServiceKey!)
+
+
+=== C:\Users\Shadow\Documents\GitHub\space.iverfinne.no\lib\utils.ts ===
+
+import { clsx, type ClassValue } from "clsx"
+import { twMerge } from "tailwind-merge"
+
+export function cn(...inputs: ClassValue[]) {
+  return twMerge(clsx(inputs))
+}
+
+export function kelvinToRgb(kelvin: number): { r: number; g: number; b: number } {
+  const temp = kelvin / 100
+  let r: number, g: number, b: number
+
+  // Calculate Red
+  if (temp <= 66) {
+    r = 255
+  } else {
+    r = temp - 60
+    r = 329.698727446 * Math.pow(r, -0.1332047592)
+  }
+
+  // Calculate Green
+  if (temp <= 66) {
+    g = temp
+    g = 99.4708025861 * Math.log(g) - 161.1195681661
+  } else {
+    g = temp - 60
+    g = 288.1221695283 * Math.pow(g, -0.0755148492)
+  }
+
+  // Calculate Blue
+  if (temp >= 66) {
+    b = 255
+  } else {
+    if (temp <= 19) {
+      b = 0
+    } else {
+      b = temp - 10
+      b = 138.5177312231 * Math.log(b) - 305.0447927307
+    }
+  }
+
+  const clamp = (val: number) => Math.max(0, Math.min(255, val))
+
+  return { r: clamp(r) / 255, g: clamp(g) / 255, b: clamp(b) / 255 }
+}
+
+
+=== C:\Users\Shadow\Documents\GitHub\space.iverfinne.no\types\index.ts ===
+
+export interface Light {
+  id: number
+  visible: boolean
+  position: [number, number, number]
+  targetPosition: [number, number, number]
+  intensity: number
+  kelvin: number
+  decay: number
+  angle: number
+  penumbra: number
+  /** legacy, ignored by the new renderer */
+  volumeOpacity?: number
+  /** physically-correct falloff distance (0 = infinite) */
+  distance?: number
+}
+
+export interface ViewSettings {
+  lights: Omit<Light, "id" | "visible">[]
+  lightsEnabled: boolean
+  environmentEnabled: boolean
+  bloomEnabled: boolean
+  ssaoEnabled: boolean
+  bgType: "color" | "gradient" | "image"
+  bgColor1: string
+  bgColor2: string
+  bgImage: string | null
+  fieldOfView: number
+  cameraPosition: [number, number, number] | null
+  cameraTarget: [number, number, number] | null
+  materialMode: "pbr" | "normal" | "white"
+}
+
+export interface Model {
+  id: string
+  name: string
+  model_url: string
+  thumbnail_url: string
+  created_at: string
+  folder_id: string | null
+  is_public: boolean
+  view_settings: ViewSettings | null
+}
+
+export interface Folder {
+  id: string
+  name: string
+  parent_id: string | null
+  created_at: string
+  description?: string
+  is_public: boolean
+}
+
+export interface GalleryContents {
+  folders: Folder[]
+  models: Model[]
+  currentFolder: Folder | null
+}
+
+export type GalleryItem = ({ type: "folder" } & Folder) | ({ type: "model" } & Model)
+
+

@@ -6,19 +6,28 @@ export interface Light {
   intensity: number
   kelvin: number
   decay: number
-  angle: number // in degrees
-  penumbra: number // 0-1
+  angle: number
+  penumbra: number
+  /** legacy, ignored by the new renderer */
+  volumeOpacity?: number
+  /** physically-correct falloff distance (0 = infinite) */
+  distance?: number
 }
 
-// Settings that are saved to the database
 export interface ViewSettings {
-  lights: Omit<Light, "id" | "visible">[] // Don't save transient state
+  lights: Omit<Light, "id" | "visible">[]
   lightsEnabled: boolean
   environmentEnabled: boolean
+  bloomEnabled: boolean
+  ssaoEnabled: boolean
   bgType: "color" | "gradient" | "image"
   bgColor1: string
   bgColor2: string
-  // bgImage is omitted as saving large data URLs in JSONB is not ideal.
+  bgImage: string | null
+  fieldOfView: number
+  cameraPosition: [number, number, number] | null
+  cameraTarget: [number, number, number] | null
+  materialMode: "pbr" | "normal" | "white"
 }
 
 export interface Model {

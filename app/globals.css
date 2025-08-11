@@ -2,8 +2,15 @@
 @tailwind components;
 @tailwind utilities;
 
+html,
+body {
+  height: 100%;
+}
+
 body {
   font-family: Arial, Helvetica, sans-serif;
+  overflow: hidden;
+  /* Prevent body scrollbars */
 }
 
 @layer utilities {
@@ -48,6 +55,7 @@ body {
     --sidebar-border: 220 13% 91%;
     --sidebar-ring: 217.2 91.2% 59.8%;
   }
+
   .dark {
     --background: 0 0% 0%;
     --foreground: 0 0% 98%;
@@ -88,6 +96,7 @@ body {
   * {
     @apply border-border;
   }
+
   body {
     @apply bg-background text-foreground;
   }

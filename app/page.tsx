@@ -1,7 +1,7 @@
 "use client";
-import { LoaderIcon } from "lucide-react"
-import dynamic from "next/dynamic"
-import GalleryClientWrapper from "./gallery-client-wrapper"
+import { LoaderIcon } from "lucide-react";
+import dynamic from "next/dynamic";
+import GalleryClientWrapper from "./gallery-client-wrapper";
 
 const GalleryPageWithNoSSR = dynamic(() => import("@/components/gallery-page"), {
   loading: () => (
