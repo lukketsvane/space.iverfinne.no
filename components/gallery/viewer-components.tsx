@@ -1,24 +1,22 @@
-﻿"use client"
+﻿// components/gallery/viewer-components.tsx
+"use client"
 import { kelvinToRgb } from "@/lib/utils"
 import type { Light } from "@/types"
-import { Html, SpotLight, useGLTF, useProgress } from "@react-three/drei"
+import { SpotLight, useGLTF } from "@react-three/drei"
 import { useThree } from "@react-three/fiber"
 import { forwardRef, useEffect, useImperativeHandle, useMemo, useRef } from "react"
 import * as THREE from "three"
 
 export function Loader() {
-    const { progress } = useProgress()
-    return (
-        <Html center>
-            <div className="w-6 h-6 rounded-full border border-white/30 border-t-transparent animate-spin" aria-label={`${progress.toFixed(0)}%`} />
-        </Html>
-    )
+    return null
 }
 
 const mkWhite = (m: THREE.Material) =>
-    m instanceof THREE.MeshStandardMaterial ? Object.assign(m.clone(), { color: new THREE.Color("white"), map: null }) : new THREE.MeshStandardMaterial({ color: "white" })
+    m instanceof THREE.MeshStandardMaterial
+        ? Object.assign(m.clone(), { color: new THREE.Color("white"), map: null })
+        : new THREE.MeshStandardMaterial({ color: "white" })
 
-const mkNormal = (_m: THREE.Material) => new THREE.MeshNormalMaterial()
+const mkNormal = (_: THREE.Material) => new THREE.MeshNormalMaterial()
 
 export const ModelViewer = forwardRef<THREE.Group, { modelUrl: string; materialMode: "pbr" | "normal" | "white" }>(
     ({ modelUrl, materialMode }, ref) => {
@@ -48,9 +46,9 @@ export const ModelViewer = forwardRef<THREE.Group, { modelUrl: string; materialM
                 if (!ch?.isMesh) return
                 const mesh = ch as THREE.Mesh
                 mesh.material =
-                    materialMode === "white" ? whites.current.get(mesh.uuid)! :
-                        materialMode === "normal" ? normals.current.get(mesh.uuid)! :
-                            originals.current.get(mesh.uuid)!
+                    materialMode === "white" ? whites.current.get(mesh.uuid)!
+                        : materialMode === "normal" ? normals.current.get(mesh.uuid)!
+                            : originals.current.get(mesh.uuid)!
             })
         }, [scene, materialMode])
 
@@ -92,6 +90,7 @@ export const CaptureController = forwardRef<{ capture: () => Promise<File | null
             async capture() {
                 if (!modelRef.current) return null
                 const bg = scene.background; scene.background = null; gl.render(scene, camera)
+
                 const box = new THREE.Box3().setFromObject(modelRef.current), v = new THREE.Vector3()
                 const pts = [
                     v.set(box.min.x, box.min.y, box.min.z).clone(), v.set(box.min.x, box.min.y, box.max.z).clone(),
@@ -109,10 +108,12 @@ export const CaptureController = forwardRef<{ capture: () => Promise<File | null
                 if (bw <= 0 || bh <= 0) { scene.background = bg; return null }
                 const size = Math.max(bw, bh) * 1.2, cx = minX + bw / 2, cy = minY + bh / 2
                 const sx = cx - size / 2, sy = cy - size / 2
+
                 const tmp = document.createElement("canvas"); tmp.width = 512; tmp.height = 512
                 const ctx = tmp.getContext("2d"); if (!ctx) { scene.background = bg; return null }
                 ctx.drawImage(gl.domElement, sx, sy, size, size, 0, 0, 512, 512)
                 scene.background = bg
+
                 const b64 = tmp.toDataURL("image/png")
                 const [meta, data] = b64.split(",")
                 const mime = meta.match(/:(.*?);/)?.[1] ?? "image/png"

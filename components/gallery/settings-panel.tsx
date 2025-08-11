@@ -1,10 +1,6 @@
 ﻿"use client"
 
 import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from "@/components/ui/accordion"
-import {
-    AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter,
-    AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger
-} from "@/components/ui/alert-dialog"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
@@ -80,36 +76,18 @@ function LightSettings({ light, onLightChange, onFocus }: {
             <div className="flex items-start justify-between">
                 <div className="pt-2 space-y-2">
                     <label>Target</label>
-                    <Button size="icon" className="text-xs h-6 w-6" onClick={() => onFocus(light.id)}>
+                    <Button size="icon" className="text-xs h-6 w-6" variant="ghost" onClick={() => onFocus(light.id)}>
                         <Crosshair className="h-3 w-3" />
                     </Button>
                 </div>
                 <DirectionalPad value={{ x: light.targetPosition[0], z: light.targetPosition[2] }} onChange={({ x, z }) => onLightChange(light.id, { targetPosition: [x, light.targetPosition[1], z] })} />
             </div>
-            <div className="flex items-center justify-between">
-                <label>Target Height (Y)</label>
-                <Slider value={[light.targetPosition[1]]} onValueChange={([v]) => onLightChange(light.id, { targetPosition: [light.targetPosition[0], v, light.targetPosition[2]] })} min={-10} max={10} step={0.1} className="w-1/2" />
-            </div>
-            <div className="flex items-center justify-between">
-                <label>Intensity</label>
-                <Slider value={[light.intensity]} onValueChange={([v]) => onLightChange(light.id, { intensity: v })} min={0} max={250} step={0.1} className="w-1/2" />
-            </div>
-            <div className="flex items-center justify-between">
-                <label>Color Temp</label>
-                <Slider value={[light.kelvin]} onValueChange={([v]) => onLightChange(light.id, { kelvin: v })} min={1000} max={12000} step={100} className="w-1/2" />
-            </div>
-            <div className="flex items-center justify-between">
-                <label>Cone Angle</label>
-                <Slider value={[light.angle]} onValueChange={([v]) => onLightChange(light.id, { angle: v })} min={0} max={90} step={1} className="w-1/2" />
-            </div>
-            <div className="flex items-center justify-between">
-                <label>Penumbra</label>
-                <Slider value={[light.penumbra]} onValueChange={([v]) => onLightChange(light.id, { penumbra: v })} min={0} max={1} step={0.01} className="w-1/2" />
-            </div>
-            <div className="flex items-center justify-between">
-                <label>Distance</label>
-                <Slider value={[light.distance ?? 0]} onValueChange={([v]) => onLightChange(light.id, { distance: v })} min={0} max={20} step={0.1} className="w-1/2" />
-            </div>
+            <div className="flex items-center justify-between"><label>Target Height (Y)</label><Slider value={[light.targetPosition[1]]} onValueChange={([v]) => onLightChange(light.id, { targetPosition: [light.targetPosition[0], v, light.targetPosition[2]] })} min={-10} max={10} step={0.1} className="w-1/2" /></div>
+            <div className="flex items-center justify-between"><label>Intensity</label><Slider value={[light.intensity]} onValueChange={([v]) => onLightChange(light.id, { intensity: v })} min={0} max={250} step={0.1} className="w-1/2" /></div>
+            <div className="flex items-center justify-between"><label>Color Temp</label><Slider value={[light.kelvin]} onValueChange={([v]) => onLightChange(light.id, { kelvin: v })} min={1000} max={12000} step={100} className="w-1/2" /></div>
+            <div className="flex items-center justify-between"><label>Cone Angle</label><Slider value={[light.angle]} onValueChange={([v]) => onLightChange(light.id, { angle: v })} min={0} max={90} step={1} className="w-1/2" /></div>
+            <div className="flex items-center justify-between"><label>Penumbra</label><Slider value={[light.penumbra]} onValueChange={([v]) => onLightChange(light.id, { penumbra: v })} min={0} max={1} step={0.01} className="w-1/2" /></div>
+            <div className="flex items-center justify-between"><label>Distance</label><Slider value={[light.distance ?? 0]} onValueChange={([v]) => onLightChange(light.id, { distance: v })} min={0} max={20} step={0.1} className="w-1/2" /></div>
         </div>
     )
 }
@@ -154,7 +132,7 @@ export interface SettingsPanelProps {
     presets: string[]
 }
 
-export function SettingsPanel(props: SettingsPanelProps) {
+export function SettingsPanel(p: SettingsPanelProps) {
     const {
         model, onUpdate, onDelete, onThumbnailUpload, onCaptureThumbnail, onDeleteThumbnail,
         lights, onLightChange, addLight, removeLight, cloneLight, toggleLightVisibility,
@@ -165,16 +143,15 @@ export function SettingsPanel(props: SettingsPanelProps) {
         bgType, onBgTypeChange, bgColor1, onBgColor1Change, bgColor2, onBgColor2Change, bgImage, onBgImageChange,
         fieldOfView, onFieldOfViewChange, onSaveView, onDeleteView, onResetView, onUnifyModel,
         onApplyPreset, presets,
-    } = props
+    } = p
 
-    const [showDeleteConfirm, setShowDeleteConfirm] = useState(false)
     const [preset, setPreset] = useState<string>(presets[0] ?? "")
     const thumbnailInputRef = useRef<HTMLInputElement>(null)
     const bgImageInputRef = useRef<HTMLInputElement>(null)
 
     const handleBgImageUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
         const file = e.target.files?.[0]; if (!file) return
-        const reader = new FileReader(); reader.onloadend = () => onBgImageChange(reader.result as string); reader.readAsDataURL(file)
+        const r = new FileReader(); r.onloadend = () => onBgImageChange(r.result as string); r.readAsDataURL(file)
     }
 
     return (
@@ -183,37 +160,20 @@ export function SettingsPanel(props: SettingsPanelProps) {
                 <div className="space-y-2">
                     <div className="flex items-center justify-between text-xs">
                         <label>Name</label>
-                        <div className="w-1/2">
-                            <EditableValue value={model.name} onSave={(newName) => onUpdate(model.id, { name: newName })} />
-                        </div>
+                        <div className="w-1/2"><EditableValue value={model.name} onSave={(v) => onUpdate(model.id, { name: v })} /></div>
                     </div>
                     <div className="flex items-center justify-between text-xs">
                         <label>Visibility</label>
                         <Button size="sm" className="h-6 bg-transparent" variant="outline" onClick={() => onUpdate(model.id, { is_public: !model.is_public })}>
-                            {model.is_public ? <Globe className="h-3 w-3 mr-1" /> : <Lock className="h-3 w-3 mr-1" />}
-                            {model.is_public ? "Public" : "Private"}
+                            {model.is_public ? <Globe className="h-3 w-3 mr-1" /> : <Lock className="h-3 w-3 mr-1" />}{model.is_public ? "Public" : "Private"}
                         </Button>
                     </div>
                     <div className="flex items-center justify-between text-xs">
                         <label>Thumbnail</label>
                         <div className="flex items-center gap-1">
-                            <AlertDialog>
-                                <AlertDialogTrigger asChild>
-                                    <Button variant="ghost" size="icon" className="h-6 w-6" disabled={model.thumbnail_url.includes("/placeholder.svg")}>
-                                        <Trash2 className="h-3 w-3" />
-                                    </Button>
-                                </AlertDialogTrigger>
-                                <AlertDialogContent>
-                                    <AlertDialogHeader>
-                                        <AlertDialogTitle>Delete Thumbnail?</AlertDialogTitle>
-                                        <AlertDialogDescription>This will revert to the placeholder thumbnail.</AlertDialogDescription>
-                                    </AlertDialogHeader>
-                                    <AlertDialogFooter>
-                                        <AlertDialogCancel>Cancel</AlertDialogCancel>
-                                        <AlertDialogAction onClick={onDeleteThumbnail}>Delete</AlertDialogAction>
-                                    </AlertDialogFooter>
-                                </AlertDialogContent>
-                            </AlertDialog>
+                            <Button variant="ghost" size="icon" className="h-6 w-6" disabled={model.thumbnail_url.includes("/placeholder.svg")} onClick={onDeleteThumbnail}>
+                                <Trash2 className="h-3 w-3" />
+                            </Button>
                             <Button size="icon" className="h-6 w-6" variant="ghost" onClick={onCaptureThumbnail}><Camera className="h-3 w-3" /></Button>
                             <Button size="icon" className="h-6 w-6" variant="ghost" onClick={() => thumbnailInputRef.current?.click()}><Upload className="h-3 w-3" /></Button>
                             <input type="file" ref={thumbnailInputRef} className="hidden" accept="image/*" onChange={(e) => e.target.files && onThumbnailUpload(e.target.files[0])} />
@@ -221,20 +181,11 @@ export function SettingsPanel(props: SettingsPanelProps) {
                     </div>
                     <div className="flex items-center justify-between text-xs">
                         <label>Unify Scale (100mm)</label>
-                        <Button size="icon" className="h-6 w-6" variant="ghost" onClick={onUnifyModel} title="Bake 100mm + center and overwrite file">
-                            <Scale className="h-3 w-3" />
-                        </Button>
+                        <Button size="icon" className="h-6 w-6" variant="ghost" onClick={onUnifyModel}><Scale className="h-3 w-3" /></Button>
                     </div>
                     <div className="flex items-center justify-between text-xs">
                         <label>Delete Model</label>
-                        {!showDeleteConfirm ? (
-                            <Button variant="ghost" size="sm" className="h-6" onClick={() => setShowDeleteConfirm(true)}>Delete</Button>
-                        ) : (
-                            <div className="flex gap-1">
-                                <Button size="sm" className="h-6" variant="ghost" onClick={() => setShowDeleteConfirm(false)}>Cancel</Button>
-                                <Button size="sm" className="h-6" variant="ghost" onClick={onDelete}>Confirm</Button>
-                            </div>
-                        )}
+                        <Button variant="ghost" size="sm" className="h-6" onClick={onDelete}>Delete</Button>
                     </div>
                 </div>
 
@@ -244,23 +195,7 @@ export function SettingsPanel(props: SettingsPanelProps) {
                     <div className="flex items-center justify-between">
                         <div />
                         <div className="flex items-center gap-2">
-                            <AlertDialog>
-                                <AlertDialogTrigger asChild>
-                                    <Button variant="ghost" size="icon" className="h-6 w-6" disabled={!model.view_settings}>
-                                        <Trash2 className="h-3 w-3" />
-                                    </Button>
-                                </AlertDialogTrigger>
-                                <AlertDialogContent>
-                                    <AlertDialogHeader>
-                                        <AlertDialogTitle>Delete Saved View?</AlertDialogTitle>
-                                        <AlertDialogDescription>This cannot be undone.</AlertDialogDescription>
-                                    </AlertDialogHeader>
-                                    <AlertDialogFooter>
-                                        <AlertDialogCancel>Cancel</AlertDialogCancel>
-                                        <AlertDialogAction onClick={onDeleteView}>Delete</AlertDialogAction>
-                                    </AlertDialogFooter>
-                                </AlertDialogContent>
-                            </AlertDialog>
+                            <Button variant="ghost" size="icon" className="h-6 w-6" disabled={!model.view_settings} onClick={onDeleteView}><Trash2 className="h-3 w-3" /></Button>
                             <Button variant="ghost" size="icon" className="h-6 w-6" onClick={onResetView}><RotateCcw className="h-4 w-4" /></Button>
                             <Button variant="ghost" size="icon" className="h-6 w-6" onClick={onSaveView}><Save className="h-3 w-3" /></Button>
                         </div>
@@ -281,24 +216,18 @@ export function SettingsPanel(props: SettingsPanelProps) {
                         <h3 className="text-sm font-semibold">Lights</h3>
                         <Switch checked={lightsEnabled} onCheckedChange={onLightsEnabledChange} />
                     </div>
-
                     {lightsEnabled && (
                         <>
                             <div className="flex items-center justify-between text-xs">
                                 <label>Presets</label>
                                 <div className="flex items-center gap-2 w-1/2">
                                     <Select value={preset} onValueChange={setPreset}>
-                                        <SelectTrigger className="h-6 text-xs bg-white/10 border-white/30 w-2/3">
-                                            <SelectValue placeholder="Choose preset" />
-                                        </SelectTrigger>
-                                        <SelectContent>
-                                            {presets.map((p) => <SelectItem key={p} value={p}>{p}</SelectItem>)}
-                                        </SelectContent>
+                                        <SelectTrigger className="h-6 text-xs bg-white/10 border-white/30 w-2/3"><SelectValue placeholder="Choose preset" /></SelectTrigger>
+                                        <SelectContent>{p.presets.map((x) => <SelectItem key={x} value={x}>{x}</SelectItem>)}</SelectContent>
                                     </Select>
                                     <Button variant="ghost" size="sm" className="h-6" onClick={() => preset && onApplyPreset(preset)}>Apply</Button>
                                 </div>
                             </div>
-
                             <Accordion type="single" collapsible className="w-full" value={selectedLightId?.toString()} onValueChange={(v) => onSelectLight(v ? Number(v) : null)}>
                                 {lights.map((light, i) => (
                                     <AccordionItem key={light.id} value={light.id.toString()} className="border-b-white/10">
@@ -306,29 +235,17 @@ export function SettingsPanel(props: SettingsPanelProps) {
                                             <div className="flex items-center justify-between w-full">
                                                 <span>Light {i + 1}</span>
                                                 <div className="flex items-center gap-1 pr-3" onClick={(e) => e.stopPropagation()}>
-                                                    <Button variant="ghost" size="icon" className="h-6 w-6" onClick={() => toggleLightVisibility(light.id)}>
-                                                        {light.visible ? <Eye className="h-4 w-4" /> : <EyeOff className="h-4 w-4" />}
-                                                    </Button>
-                                                    <Button variant="ghost" size="icon" className="h-6 w-6" onClick={() => cloneLight(light.id)}>
-                                                        <Clone className="h-3 w-3" />
-                                                    </Button>
-                                                    <Button variant="ghost" size="icon" className="h-6 w-6" onClick={() => removeLight(light.id)}>
-                                                        <Trash2 className="h-3 w-3" />
-                                                    </Button>
+                                                    <Button variant="ghost" size="icon" className="h-6 w-6" onClick={() => toggleLightVisibility(light.id)}>{light.visible ? <Eye className="h-4 w-4" /> : <EyeOff className="h-4 w-4" />}</Button>
+                                                    <Button variant="ghost" size="icon" className="h-6 w-6" onClick={() => cloneLight(light.id)}><Clone className="h-3 w-3" /></Button>
+                                                    <Button variant="ghost" size="icon" className="h-6 w-6" onClick={() => removeLight(light.id)}><Trash2 className="h-3 w-3" /></Button>
                                                 </div>
                                             </div>
                                         </AccordionTrigger>
-                                        <AccordionContent>
-                                            <LightSettings light={light} onLightChange={onLightChange} onFocus={onFocusLight} />
-                                        </AccordionContent>
+                                        <AccordionContent><LightSettings light={light} onLightChange={onLightChange} onFocus={onFocusLight} /></AccordionContent>
                                     </AccordionItem>
                                 ))}
                             </Accordion>
-                            <div className="flex justify-end pt-2">
-                                <Button size="icon" className="h-6 w-6" variant="ghost" onClick={addLight} disabled={lights.length >= 5}>
-                                    <Plus className="w-3 h-3" />
-                                </Button>
-                            </div>
+                            <div className="flex justify-end pt-2"><Button size="icon" className="h-6 w-6" variant="ghost" onClick={addLight} disabled={lights.length >= 5}><Plus className="w-3 h-3" /></Button></div>
                         </>
                     )}
                 </div>
@@ -342,37 +259,19 @@ export function SettingsPanel(props: SettingsPanelProps) {
                     </div>
                     {environmentEnabled && (
                         <div className="space-y-2">
-                            <div className="flex items-center justify-between text-xs">
-                                <label>Bloom</label>
-                                <Switch checked={bloomEnabled} onCheckedChange={onBloomEnabledChange} />
-                            </div>
+                            <div className="flex items-center justify-between text-xs"><label>Bloom</label><Switch checked={bloomEnabled} onCheckedChange={onBloomEnabledChange} /></div>
                             <div className="flex items-center justify-between text-xs">
                                 <label>Background</label>
                                 <Select value={bgType} onValueChange={onBgTypeChange as any}>
                                     <SelectTrigger className="w-1/2 h-6 text-xs bg-white/10 border-white/30"><SelectValue /></SelectTrigger>
-                                    <SelectContent>
-                                        <SelectItem value="color">Color</SelectItem>
-                                        <SelectItem value="gradient">Gradient</SelectItem>
-                                        <SelectItem value="image">Image</SelectItem>
-                                    </SelectContent>
+                                    <SelectContent><SelectItem value="color">Color</SelectItem><SelectItem value="gradient">Gradient</SelectItem><SelectItem value="image">Image</SelectItem></SelectContent>
                                 </Select>
                             </div>
-                            {bgType === "color" && (
-                                <div className="flex items-center justify-between text-xs">
-                                    <label>Color</label>
-                                    <input type="color" value={bgColor1} onChange={(e) => onBgColor1Change(e.target.value)} className="w-6 h-6 p-0 bg-transparent border-none" />
-                                </div>
-                            )}
+                            {bgType === "color" && (<div className="flex items-center justify-between text-xs"><label>Color</label><input type="color" value={bgColor1} onChange={(e) => onBgColor1Change(e.target.value)} className="w-6 h-6 p-0 bg-transparent border-none" /></div>)}
                             {bgType === "gradient" && (
                                 <>
-                                    <div className="flex items-center justify-between text-xs">
-                                        <label>Top Color</label>
-                                        <input type="color" value={bgColor1} onChange={(e) => onBgColor1Change(e.target.value)} className="w-6 h-6 p-0 bg-transparent border-none" />
-                                    </div>
-                                    <div className="flex items-center justify-between text-xs">
-                                        <label>Bottom Color</label>
-                                        <input type="color" value={bgColor2} onChange={(e) => onBgColor2Change(e.target.value)} className="w-6 h-6 p-0 bg-transparent border-none" />
-                                    </div>
+                                    <div className="flex items-center justify-between text-xs"><label>Top Color</label><input type="color" value={bgColor1} onChange={(e) => onBgColor1Change(e.target.value)} className="w-6 h-6 p-0 bg-transparent border-none" /></div>
+                                    <div className="flex items-center justify-between text-xs"><label>Bottom Color</label><input type="color" value={bgColor2} onChange={(e) => onBgColor2Change(e.target.value)} className="w-6 h-6 p-0 bg-transparent border-none" /></div>
                                 </>
                             )}
                             {bgType === "image" && (
