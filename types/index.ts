@@ -1,4 +1,3 @@
-// === /workspaces/space.iverfinne.no/types/index.ts ===
 export interface Light {
   id: number
   visible: boolean

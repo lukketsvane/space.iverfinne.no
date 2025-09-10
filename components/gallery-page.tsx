@@ -1,4 +1,3 @@
-// === /workspaces/space.iverfinne.no/components/gallery-page.tsx ===
 "use client"
 
 import { BulkActionBar } from "@/components/gallery/bulk-action-bar"
@@ -12,24 +11,12 @@ import { Input } from "@/components/ui/input"
 import { Skeleton } from "@/components/ui/skeleton"
 import { lightingPresets } from "@/lib/lighting-presets"
 import { cn } from "@/lib/utils"
-import type { Folder, Light, Model, ViewSettings } from "@/types"
+import type { Folder, GalleryItem, Light, Model, ViewSettings } from "@/types"
 import { Bounds, OrbitControls, useGLTF } from "@react-three/drei"
 import { Canvas } from "@react-three/fiber"
 import { Bloom, EffectComposer } from "@react-three/postprocessing"
 import { upload } from "@vercel/blob/client"
-import {
-  ChevronDown,
-  ChevronLeft,
-  Download,
-  Globe,
-  Info,
-  ListFilter,
-  Lock,
-  Palette,
-  Plus,
-  Search,
-  Upload
-} from "lucide-react"
+import { ChevronDown, ChevronLeft, Download, Globe, Info, ListFilter, Lock, Palette, Plus, Search, Upload } from "lucide-react"
 import { useRouter, useSearchParams } from "next/navigation"
 import type React from "react"
 import { Fragment, Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react"
@@ -58,13 +45,7 @@ export default function GalleryPage() {
 
   const [sortBy, sortOrder] = sortOption.split("-")
   const galleryUrl = `/api/gallery?folderId=${currentFolderId || ""}&sortBy=${sortBy}&sortOrder=${sortOrder}`
-  const { data: gallery, error, isLoading } = useSWR<{ folders: Folder[]; models: Model[]; currentFolder: Folder | null }>(
-    galleryUrl,
-    fetcher,
-  )
-
-  // NEW: fetch all models across all folders/subfolders for default grid
-  const { data: allModels } = useSWR<Model[]>("/api/models/all", fetcher)
+  const { data: gallery, error, isLoading } = useSWR<{ folders: Folder[]; models: Model[]; currentFolder: Folder | null }>(galleryUrl, fetcher)
 
   const { data: allFolders } = useSWR<Folder[]>("/api/folders/all", fetcher)
   const { data: selectedModel, mutate: mutateSelectedModel } = useSWR<Model>(modelId ? `/api/models/${modelId}` : null, fetcher)
@@ -73,35 +54,76 @@ export default function GalleryPage() {
   useEffect(() => {
     setBreadcrumbs(currentFolderId === null ? [{ id: null, name: "Assets" }] : [{ id: null, name: "Assets" }, ...(breadcrumbData || [])])
   }, [currentFolderId, breadcrumbData])
-  // replace the previous gridModels useMemo with this
 
-  // models for the simplified grid (prefer true "all models" endpoint)
+  const [refreshKey, setRefreshKey] = useState(0)
+  const [allModelsCombined, setAllModelsCombined] = useState<Model[] | null>(null)
+
+  useEffect(() => {
+    let cancelled = false
+    const load = async () => {
+      const ids = [null, ...((allFolders ?? []).map((f) => f.id))]
+      const results = await Promise.all(
+        ids.map((fid) =>
+          fetch(`/api/gallery?folderId=${fid ?? ""}&sortBy=created_at&sortOrder=desc`)
+            .then((r) => (r.ok ? r.json() : null))
+            .catch(() => null),
+        ),
+      )
+      const models: Model[] = results.flatMap((r) => (r && Array.isArray(r.models) ? (r.models as Model[]) : []))
+      const uniq = new Map<string, Model>()
+      models.forEach((m) => uniq.set(m.id, m))
+      if (!cancelled) setAllModelsCombined(Array.from(uniq.values()))
+    }
+    load()
+    return () => {
+      cancelled = true
+    }
+  }, [allFolders, refreshKey])
+
   const gridModels: (Model & { type: "model" })[] = useMemo(() => {
-    // normalize possible shapes from the API/SWR
-    const list: unknown =
-      Array.isArray(allModels)
-        ? allModels
-        : Array.isArray((allModels as any)?.models)
-          ? (allModels as any).models
-          : Array.isArray(gallery?.models)
-            ? gallery!.models
-            : [];
+    const list = (allModelsCombined ?? gallery?.models ?? []) as Model[]
+    return list.map((m) => ({ ...m, type: "model" as const }))
+  }, [allModelsCombined, gallery?.models])
 
-    const safe: Model[] = Array.isArray(list) ? (list as Model[]) : [];
-    return safe.map((m) => ({ ...m, type: "model" as const }));
-  }, [allModels, gallery?.models]);
-
+  const folderById = useMemo(() => {
+    const map = new Map<string, Folder>()
+      ; (allFolders ?? []).forEach((f) => map.set(f.id, f))
+    return map
+  }, [allFolders])
 
   const filteredItems = useMemo(() => {
-    const q = searchQuery.toLowerCase()
-    return gridModels.filter((m) => {
+    const q = searchQuery.trim().toLowerCase()
+    const matchesFolderChain = (folderId: string | null | undefined) => {
+      let cur = folderId ? folderById.get(folderId) : null
+      while (cur) {
+        if ((cur.name || "").toLowerCase().includes(q) || (cur.description || "").toLowerCase().includes(q)) return true
+        cur = cur.parent_id ? folderById.get(cur.parent_id as any) : null
+      }
+      return false
+    }
+    const base = gridModels.filter((m) => {
       if (pill === "public" && !m.is_public) return false
       if (pill === "drafts" && m.is_public) return false
-      return m.name.toLowerCase().includes(q) || gallery?.currentFolder?.description?.toLowerCase().includes(q)
+      if (!q) return true
+      const nameHit = m.name.toLowerCase().includes(q)
+      const folderHit = matchesFolderChain(m.folder_id)
+      return nameHit || folderHit
     })
-  }, [gridModels, pill, searchQuery, gallery?.currentFolder?.description])
+    const sorted = [...base].sort((a, b) => {
+      if (sortBy === "name") {
+        const r = a.name.localeCompare(b.name)
+        return sortOrder === "asc" ? r : -r
+      }
+      if (sortBy === "created_at") {
+        const ra = new Date(a.created_at as any).getTime()
+        const rb = new Date(b.created_at as any).getTime()
+        return sortOrder === "asc" ? ra - rb : rb - ra
+      }
+      return 0
+    })
+    return sorted
+  }, [gridModels, pill, searchQuery, folderById, sortBy, sortOrder])
 
-  // ===== Viewer state =====
   const [materialMode, setMaterialMode] = useState<"pbr" | "normal" | "white">("white")
   const [isSettingsPanelOpen, setIsSettingsPanelOpen] = useState(true)
   const [lightsEnabled, setLightsEnabled] = useState(true)
@@ -114,7 +136,6 @@ export default function GalleryPage() {
   const [lights, setLights] = useState<Light[]>([])
   const [selectedLightId, setSelectedLightId] = useState<number | null>(null)
 
-  // Clay / physical override
   const [matOverrideEnabled, setMatOverrideEnabled] = useState(false)
   const [matBaseColor, setMatBaseColor] = useState<string>("#e5e5e5")
   const [matMetalness, setMatMetalness] = useState<number>(0)
@@ -147,8 +168,6 @@ export default function GalleryPage() {
       setBgColor2(s?.bgColor2 ?? "#1a1a1a")
       setBgImage(s?.bgImage ?? null)
       setMaterialMode(s?.materialMode ?? "white")
-
-      // material override
       setMatOverrideEnabled(!!s?.materialOverride?.enabled)
       setMatBaseColor(s?.materialOverride?.color ?? "#e5e5e5")
       setMatMetalness(s?.materialOverride?.metalness ?? 0)
@@ -157,7 +176,6 @@ export default function GalleryPage() {
       setMatClearcoatRough(s?.materialOverride?.clearcoatRoughness ?? 0.6)
       setMatIOR(s?.materialOverride?.ior ?? 1.5)
       setMatTransmission(s?.materialOverride?.transmission ?? 0)
-
       setSelectedLightId(null)
     },
     [defaultLights],
@@ -186,11 +204,11 @@ export default function GalleryPage() {
       mutateSelectedModel()
       mutate(galleryUrl)
       mutateModel(`/api/models/${id}`)
+      setRefreshKey((k) => k + 1)
     },
     [mutateSelectedModel, mutate, mutateModel, galleryUrl],
   )
 
-  // FIX: robust blob ext + fallback
   const handleThumbnailUpload = useCallback(
     async (file: File) => {
       if (!selectedModel) return
@@ -262,12 +280,11 @@ export default function GalleryPage() {
               folder_id: currentFolderId,
             }),
           })
-        } catch {
-          // ignore
-        }
+        } catch { }
       }),
     )
     mutate(galleryUrl)
+    setRefreshKey((k) => k + 1)
   }
 
   const handleRename = async (newName: string) => {
@@ -278,11 +295,13 @@ export default function GalleryPage() {
     mutate(galleryUrl)
     mutate(`/api/models/${item.id}`)
     setRenameItem(null)
+    setRefreshKey((k) => k + 1)
   }
 
   const bulkAct = async (ids: string[], fn: (id: string) => Promise<void>) => {
     await Promise.all(ids.map(async (id) => fn(id)))
     mutate(galleryUrl)
+    setRefreshKey((k) => k + 1)
   }
 
   const handleBulkDelete = async () => {
@@ -291,7 +310,6 @@ export default function GalleryPage() {
     setSelectedItems(new Set())
   }
 
-  // simplified grid: moving between folders disabled
   const handleBulkMove = async (_targetFolderId: string | null) => { }
 
   const handleBulkSetPublic = async (isPublic: boolean) => {
@@ -465,7 +483,6 @@ export default function GalleryPage() {
   const [renameItem, setRenameItem] = useState<Model | null>(null)
   const [editingFolder, setEditingFolder] = useState<Folder | null>(null)
 
-  // ======= Viewer =======
   if (modelId) {
     if (!selectedModel) return <div className="w-full h-screen" />
     return (
@@ -480,8 +497,7 @@ export default function GalleryPage() {
             gl.toneMappingExposure = 1
             gl.shadowMap.enabled = true
             gl.shadowMap.type = THREE.PCFSoftShadowMap
-            // @ts-ignore
-            gl.physicallyCorrectLights = true
+              ; (gl as any).physicallyCorrectLights = true
           }}
           onPointerMissed={(e) => e.button === 0 && setSelectedLightId(null)}
           onPointerDown={onPointerDown}
@@ -543,7 +559,6 @@ export default function GalleryPage() {
               onThumbnailUpload={handleThumbnailUpload}
               onCaptureThumbnail={handleCaptureThumbnail}
               onDeleteThumbnail={handleDeleteThumbnail}
-              // lights
               lights={lights}
               onLightChange={handleLightChange}
               addLight={addLight}
@@ -555,7 +570,6 @@ export default function GalleryPage() {
               onFocusLight={focusLightOnModel}
               lightsEnabled={lightsEnabled}
               onLightsEnabledChange={setLightsEnabled}
-              // environment
               environmentEnabled={environmentEnabled}
               onEnvironmentEnabledChange={setEnvironmentEnabled}
               bloomEnabled={bloomEnabled}
@@ -568,7 +582,6 @@ export default function GalleryPage() {
               onBgColor2Change={setBgColor2}
               bgImage={bgImage}
               onBgImageChange={setBgImage}
-              // material override & mode
               materialMode={materialMode}
               onMaterialModeChange={setMaterialMode}
               matOverrideEnabled={matOverrideEnabled}
@@ -587,11 +600,9 @@ export default function GalleryPage() {
               onMatIORChange={setMatIOR}
               matTransmission={matTransmission}
               onMatTransmissionChange={setMatTransmission}
-              // view
               onSaveView={handleSaveViewSettings}
               onDeleteView={handleDeleteViewSettings}
               onResetView={() => resetViewSettings(selectedModel.view_settings)}
-              // presets
               onApplyPreset={(n) => applyPreset(n)}
               presets={lightingPresets.map((p) => p.name)}
             />
@@ -628,10 +639,8 @@ export default function GalleryPage() {
     )
   }
 
-  // === Simplified landing (no sidebar) ===
   return (
     <div className="min-h-screen bg-black text-white relative">
-      {/* top bar */}
       <div className="flex items-center justify-between px-4 md:px-8 py-4">
         <div className="text-sm text-white/70">
           {breadcrumbs.map((c, i) => (
@@ -668,7 +677,6 @@ export default function GalleryPage() {
         </div>
       </div>
 
-      {/* search hero */}
       <div className={cn("px-4 md:px-8", filteredItems.length === 0 && !searchQuery ? "pt-24" : "pt-6")}>
         <div className={cn("mx-auto", filteredItems.length === 0 && !searchQuery ? "max-w-2xl" : "max-w-4xl")}>
           <div className={cn("relative", filteredItems.length === 0 && !searchQuery ? "" : "mb-4")}>
@@ -686,10 +694,7 @@ export default function GalleryPage() {
             {(["all", "models", "public", "drafts"] as Pill[]).map((k) => (
               <button
                 key={k}
-                className={cn(
-                  "px-3 py-1.5 rounded-full text-sm",
-                  pill === k ? "bg-white text-black" : "bg-white/10 text-white/80 hover:bg-white/20",
-                )}
+                className={cn("px-3 py-1.5 rounded-full text-sm", pill === k ? "bg-white text-black" : "bg-white/10 text-white/80 hover:bg-white/20")}
                 onClick={() => setPill(k)}
               >
                 {k === "all" ? "All" : k[0].toUpperCase() + k.slice(1)}
@@ -699,7 +704,6 @@ export default function GalleryPage() {
         </div>
       </div>
 
-      {/* grid */}
       <main
         className="relative px-4 md:px-8 pb-24"
         onClick={() => setSelectedItems(new Set())}
@@ -721,16 +725,14 @@ export default function GalleryPage() {
 
         {error && <div className="text-center text-destructive mt-12">Failed to load gallery.</div>}
 
-        {!isLoading && filteredItems.length === 0 && searchQuery && (
-          <div className="text-center text-white/60 mt-10">No results.</div>
-        )}
+        {!isLoading && filteredItems.length === 0 && searchQuery && <div className="text-center text-white/60 mt-10">No results.</div>}
 
         {!isLoading && filteredItems.length > 0 && (
           <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 xl:grid-cols-6 gap-4 mt-6">
             {filteredItems.map((item) => (
               <ItemContextMenu
                 key={item.id}
-                item={item}
+                item={item as unknown as GalleryItem}
                 onRename={() => setRenameItem(item)}
                 onDelete={() => {
                   setSelectedItems(new Set([item.id]))
@@ -745,32 +747,25 @@ export default function GalleryPage() {
               >
                 <div
                   onClick={(e) => handleItemClick(e, item)}
-                  onDoubleClick={() => item.type === "model" && handleModelClick(item)}
+                  onDoubleClick={() => handleModelClick(item)}
                   className={cn(
                     "group relative aspect-square rounded-lg overflow-hidden cursor-pointer transition-all duration-200 bg-white/5",
                     selectedItems.has(item.id) && "ring-2 ring-white ring-offset-[3px] ring-offset-black",
                   )}
                 >
-                  {item.type === "folder" ? (
-                    <div className="w-full h-full flex flex-col items-center justify-center bg-white/5">
-                      <FolderIcon className="w-1/3 h-1/3 text-white/50" />
-                      <p className="text-sm font-semibold truncate mt-2 text-center w-full px-2">{item.name}</p>
+                  <>
+                    <img
+                      src={item.thumbnail_url || "/placeholder.svg"}
+                      alt={item.name}
+                      className="w-full h-full object-contain transition-transform duration-300 group-hover:scale-110"
+                      onError={(e) => {
+                        ; (e.target as HTMLImageElement).src = `/placeholder.svg?width=400&height=400&query=error`
+                      }}
+                    />
+                    <div className="absolute inset-0 bg-black/60 opacity-0 group-hover:opacity-100 transition-opacity duration-300 flex items-end p-2">
+                      <p className="text-sm font-semibold truncate text-white">{item.name}</p>
                     </div>
-                  ) : (
-                    <>
-                      <img
-                        src={item.thumbnail_url || "/placeholder.svg"}
-                        alt={item.name}
-                        className="w-full h-full object-contain transition-transform duration-300 group-hover:scale-110"
-                        onError={(e) => {
-                          ; (e.target as HTMLImageElement).src = `/placeholder.svg?width=400&height=400&query=error`
-                        }}
-                      />
-                      <div className="absolute inset-0 bg-black/60 opacity-0 group-hover:opacity-100 transition-opacity duration-300 flex items-end p-2">
-                        <p className="text-sm font-semibold truncate text-white">{item.name}</p>
-                      </div>
-                    </>
-                  )}
+                  </>
                   <div className={cn("absolute top-2 left-2 transition-opacity", selectedItems.has(item.id) ? "opacity-100" : "opacity-0 group-hover:opacity-100")}>
                     <Checkbox
                       checked={selectedItems.has(item.id)}
@@ -782,12 +777,10 @@ export default function GalleryPage() {
                       className="bg-black/50 border-white/50 data-[state=checked]:bg-white data-[state=checked]:text-black"
                     />
                   </div>
-                  {item.type === "model" && <div className="absolute bottom-2 left-2">{item.is_public ? <Globe className="h-4 w-4 text-white/70" /> : <Lock className="h-4 w-4 text-white/70" />}</div>}
+                  <div className="absolute bottom-2 left-2">{item.is_public ? <Globe className="h-4 w-4 text-white/70" /> : <Lock className="h-4 w-4 text-white/70" />}</div>
                 </div>
               </ItemContextMenu>
             ))}
-
-            {/* quick uploader card */}
             <div
               onClick={() => document.querySelector<HTMLInputElement>('input[type="file"]')?.click()}
               className="group relative aspect-square rounded-lg border-2 border-dashed border-white/20 flex flex-col items-center justify-center text-white/60 hover:bg-white/5 hover:border-white/40 transition-colors cursor-pointer"
@@ -800,8 +793,6 @@ export default function GalleryPage() {
       </main>
 
       {selectedItems.size > 0 && (
-        // In components/gallery-page.tsx, replace the BulkActionBar props block with this:
-
         <BulkActionBar
           selectedCount={selectedItems.size}
           onClear={() => setSelectedItems(new Set())}
@@ -821,13 +812,11 @@ export default function GalleryPage() {
               document.body.removeChild(a)
             })
           }}
-          // FIX: use gridModels instead of undefined galleryItems
           allItems={gridModels as unknown as GalleryItem[]}
           selectedIds={selectedItems}
           allFolders={allFolders}
           currentFolderId={currentFolderId}
         />
-
       )}
 
       <NewFolderDialog
@@ -836,6 +825,7 @@ export default function GalleryPage() {
         onCreate={async (name) => {
           await fetch("/api/folders", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ name, parent_id: currentFolderId }) })
           mutate(galleryUrl)
+          setRefreshKey((k) => k + 1)
         }}
       />
       {renameItem && <RenameDialog item={renameItem} onOpenChange={() => setRenameItem(null)} onRename={handleRename} />}
