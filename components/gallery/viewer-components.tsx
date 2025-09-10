@@ -1,4 +1,5 @@
-﻿"use client"
+﻿// === /workspaces/space.iverfinne.no/components/gallery/viewer-components.tsx ===
+"use client"
 import { kelvinToRgb } from "@/lib/utils"
 import type { Light } from "@/types"
 import { SpotLight, useGLTF } from "@react-three/drei"
@@ -35,6 +36,7 @@ const mkOverride = (o: {
     })
     mat.toneMapped = true
     mat.envMapIntensity = 1
+    mat.needsUpdate = true
     return mat
 }
 
@@ -89,7 +91,7 @@ export const ModelViewer = forwardRef<
         }
     }, [scene])
 
-    // Apply material mode if override is off
+    // Mode (only when override disabled)
     useEffect(() => {
         if (materialOverride.enabled) return
         scene.traverse((ch: any) => {
@@ -102,7 +104,7 @@ export const ModelViewer = forwardRef<
         })
     }, [scene, materialMode, materialOverride.enabled])
 
-    // Apply override ("clay"/physical)
+    // Override (clay/physical) — ensure proper lighting (compute normals if missing)
     useEffect(() => {
         if (!materialOverride.enabled) return
         overrides.current.forEach((mat) => {
@@ -114,6 +116,11 @@ export const ModelViewer = forwardRef<
         scene.traverse((ch: any) => {
             if (!ch?.isMesh) return
             const mesh = ch as THREE.Mesh
+            const g = mesh.geometry as THREE.BufferGeometry
+            if (!g.attributes.normal) {
+                g.computeVertexNormals()
+                g.normalizeNormals()
+            }
             const base = originals.current.get(mesh.uuid)
             if (Array.isArray(base)) {
                 const ov = base.map(() =>

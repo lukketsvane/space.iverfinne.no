@@ -266,7 +266,8 @@ export function SettingsPanel(p: SettingsPanelProps) {
     const thumbnailInputRef = useRef<HTMLInputElement>(null)
     const bgImageInputRef = useRef<HTMLInputElement>(null)
 
-    const [lightsSectionOpen, setLightsSectionOpen] = useState(false) // collapsed by default
+    // collapsed-by-default Lights section
+    const [lightsSectionOpen, setLightsSectionOpen] = useState(false)
 
     const handleBgImageUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
         const file = e.target.files?.[0]
@@ -398,7 +399,7 @@ export function SettingsPanel(p: SettingsPanelProps) {
                                         <SelectTrigger className="h-6 text-xs bg-white/10 border-white/30 w-2/3">
                                             <SelectValue placeholder="Choose preset" />
                                         </SelectTrigger>
-                                        <SelectContent>{p.presets.map((x) => <SelectItem key={x} value={x}>{x}</SelectItem>)}</SelectContent>
+                                        <SelectContent>{presets.map((x) => <SelectItem key={x} value={x}>{x}</SelectItem>)}</SelectContent>
                                     </Select>
                                     <Button variant="ghost" size="sm" className="h-6" onClick={() => preset && onApplyPreset(preset)}>
                                         Apply

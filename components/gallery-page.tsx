@@ -11,12 +11,24 @@ import { Input } from "@/components/ui/input"
 import { Skeleton } from "@/components/ui/skeleton"
 import { lightingPresets } from "@/lib/lighting-presets"
 import { cn } from "@/lib/utils"
-import type { Folder, GalleryContents, GalleryItem, Light, Model, ViewSettings } from "@/types"
+import type { Folder, GalleryItem, Light, Model, ViewSettings } from "@/types"
 import { Bounds, OrbitControls, useGLTF } from "@react-three/drei"
 import { Canvas } from "@react-three/fiber"
 import { Bloom, EffectComposer } from "@react-three/postprocessing"
 import { upload } from "@vercel/blob/client"
-import { ChevronDown, ChevronLeft, Download, FolderIcon, Globe, Info, ListFilter, Lock, Palette, Plus, Search, Upload } from "lucide-react"
+import {
+  ChevronDown,
+  ChevronLeft,
+  Download,
+  Globe,
+  Info,
+  ListFilter,
+  Lock,
+  Palette,
+  Plus,
+  Search,
+  Upload
+} from "lucide-react"
 import { useRouter, useSearchParams } from "next/navigation"
 import type React from "react"
 import { Fragment, Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react"
@@ -45,7 +57,14 @@ export default function GalleryPage() {
 
   const [sortBy, sortOrder] = sortOption.split("-")
   const galleryUrl = `/api/gallery?folderId=${currentFolderId || ""}&sortBy=${sortBy}&sortOrder=${sortOrder}`
-  const { data: gallery, error, isLoading } = useSWR<GalleryContents>(galleryUrl, fetcher)
+  const { data: gallery, error, isLoading } = useSWR<{ folders: Folder[]; models: Model[]; currentFolder: Folder | null }>(
+    galleryUrl,
+    fetcher,
+  )
+
+  // NEW: fetch all models across all folders/subfolders for default grid
+  const { data: allModels } = useSWR<Model[]>("/api/models/all", fetcher)
+
   const { data: allFolders } = useSWR<Folder[]>("/api/folders/all", fetcher)
   const { data: selectedModel, mutate: mutateSelectedModel } = useSWR<Model>(modelId ? `/api/models/${modelId}` : null, fetcher)
   const { data: breadcrumbData } = useSWR<{ id: string; name: string }[]>(currentFolderId ? `/api/folders/${currentFolderId}/breadcrumbs` : null, fetcher)
@@ -54,32 +73,22 @@ export default function GalleryPage() {
     setBreadcrumbs(currentFolderId === null ? [{ id: null, name: "Assets" }] : [{ id: null, name: "Assets" }, ...(breadcrumbData || [])])
   }, [currentFolderId, breadcrumbData])
 
-  const galleryItems: GalleryItem[] = useMemo(
-    () => [
-      ...(gallery?.folders.map((f) => ({ ...f, type: "folder" as const })) ?? []),
-      ...(gallery?.models.map((m) => ({ ...m, type: "model" as const })) ?? []),
-    ],
-    [gallery],
+  // models for the simplified grid (prefer true "all models" endpoint)
+  const gridModels: (Model & { type: "model" })[] = useMemo(
+    () => (allModels ?? gallery?.models ?? []).map((m) => ({ ...m, type: "model" as const })),
+    [allModels, gallery?.models],
   )
 
   const filteredItems = useMemo(() => {
     const q = searchQuery.toLowerCase()
-    return galleryItems.filter((item) => {
-      // pill filtering
-      if (pill === "models" && item.type !== "model") return false
-      if (pill === "public" && !(item as any).is_public) return false
-      if (pill === "drafts" && (item as any).is_public) return false
-
-      // text filtering
-      const nameMatch = item.name.toLowerCase().includes(q)
-      if (searchQuery && item.type === "model") {
-        const folderDescriptionMatch = gallery?.currentFolder?.description?.toLowerCase().includes(q)
-        return nameMatch || folderDescriptionMatch
-      }
-      return nameMatch
+    return gridModels.filter((m) => {
+      if (pill === "public" && !m.is_public) return false
+      if (pill === "drafts" && m.is_public) return false
+      return m.name.toLowerCase().includes(q) || gallery?.currentFolder?.description?.toLowerCase().includes(q)
     })
-  }, [galleryItems, searchQuery, gallery?.currentFolder?.description, pill])
+  }, [gridModels, pill, searchQuery, gallery?.currentFolder?.description])
 
+  // ===== Viewer state =====
   const [materialMode, setMaterialMode] = useState<"pbr" | "normal" | "white">("white")
   const [isSettingsPanelOpen, setIsSettingsPanelOpen] = useState(true)
   const [lightsEnabled, setLightsEnabled] = useState(true)
@@ -92,7 +101,7 @@ export default function GalleryPage() {
   const [lights, setLights] = useState<Light[]>([])
   const [selectedLightId, setSelectedLightId] = useState<number | null>(null)
 
-  // Material override state — defaults to "clay" look
+  // Clay / physical override
   const [matOverrideEnabled, setMatOverrideEnabled] = useState(false)
   const [matBaseColor, setMatBaseColor] = useState<string>("#e5e5e5")
   const [matMetalness, setMatMetalness] = useState<number>(0)
@@ -168,6 +177,7 @@ export default function GalleryPage() {
     [mutateSelectedModel, mutate, mutateModel, galleryUrl],
   )
 
+  // FIX: robust blob ext + fallback
   const handleThumbnailUpload = useCallback(
     async (file: File) => {
       if (!selectedModel) return
@@ -176,12 +186,12 @@ export default function GalleryPage() {
       const ext = (fromName || fromType || "png").replace(/[^a-z0-9]/gi, "")
       const pathname = `thumbnails/${selectedModel.id}-${Date.now()}.${ext || "png"}`
       try {
-        const blobRes = await upload(pathname, file, { access: "public", handleUploadUrl: "/api/upload" })
-        const url = (blobRes as any).url || (blobRes as any).downloadUrl
+        const newBlob = await upload(pathname, file, { access: "public", handleUploadUrl: "/api/upload" })
+        const url = (newBlob as any).url || (newBlob as any).downloadUrl
         await handleModelUpdate(selectedModel.id, { thumbnail_url: `${url}?v=${Date.now()}` })
       } catch {
-        const fallbackUrl = URL.createObjectURL(file)
-        await handleModelUpdate(selectedModel.id, { thumbnail_url: fallbackUrl })
+        const fallback = URL.createObjectURL(file)
+        await handleModelUpdate(selectedModel.id, { thumbnail_url: fallback })
       }
     },
     [selectedModel, handleModelUpdate],
@@ -204,7 +214,7 @@ export default function GalleryPage() {
   const handleModelClick = (m: Model) => updateQuery({ modelId: m.id })
   const handleCloseViewer = () => updateQuery({ modelId: null })
 
-  const handleItemClick = (e: React.MouseEvent, item: GalleryItem) => {
+  const handleItemClick = (e: React.MouseEvent, item: Model & { type: "model" }) => {
     e.stopPropagation()
     const next = new Set(selectedItems)
     if (e.shiftKey && lastSelectedItem.current) {
@@ -240,7 +250,7 @@ export default function GalleryPage() {
             }),
           })
         } catch {
-          /* noop */
+          // ignore
         }
       }),
     )
@@ -250,44 +260,34 @@ export default function GalleryPage() {
   const handleRename = async (newName: string) => {
     const item = renameItem
     if (!item) return
-    const url = item.type === "folder" ? `/api/folders/${item.id}` : `/api/models/${item.id}`
+    const url = `/api/models/${item.id}`
     await fetch(url, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ name: newName }) })
     mutate(galleryUrl)
-    if (item.type === "model") mutate(`/api/models/${item.id}`)
+    mutate(`/api/models/${item.id}`)
     setRenameItem(null)
   }
 
-  const bulkAct = async (ids: string[], fn: (id: string, type: "folder" | "model") => Promise<void>) => {
-    await Promise.all(
-      ids.map(async (id) => {
-        const it = galleryItems.find((i) => i.id === id)
-        if (!it) return
-        await fn(id, it.type)
-      }),
-    )
+  const bulkAct = async (ids: string[], fn: (id: string) => Promise<void>) => {
+    await Promise.all(ids.map(async (id) => fn(id)))
     mutate(galleryUrl)
   }
 
   const handleBulkDelete = async () => {
-    await bulkAct(Array.from(selectedItems), (id, type) => fetch(type === "folder" ? `/api/folders/${id}` : `/api/models/${id}`, { method: "DELETE" }).then(() => { }))
+    await bulkAct(Array.from(selectedItems), (id) => fetch(`/api/models/${id}`, { method: "DELETE" }).then(() => { }))
     if (Array.from(selectedItems).includes(modelId || "")) handleCloseViewer()
     setSelectedItems(new Set())
   }
 
-  const handleBulkMove = async (_targetFolderId: string | null) => {
-    // sidebar is gone; moving between folders is out-of-scope in this simplified grid
-    return
-  }
+  // simplified grid: moving between folders disabled
+  const handleBulkMove = async (_targetFolderId: string | null) => { }
 
   const handleBulkSetPublic = async (isPublic: boolean) => {
-    await bulkAct(
-      Array.from(selectedItems),
-      (id, type) =>
-        fetch(type === "folder" ? `/api/folders/${id}` : `/api/models/${id}`, {
-          method: "PATCH",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ is_public: isPublic }),
-        }).then(() => { }),
+    await bulkAct(Array.from(selectedItems), (id) =>
+      fetch(`/api/models/${id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ is_public: isPublic }),
+      }).then(() => { }),
     )
     if (Array.from(selectedItems).includes(modelId || "")) mutateSelectedModel()
     setSelectedItems(new Set())
@@ -334,11 +334,26 @@ export default function GalleryPage() {
     await handleModelUpdate(selectedModel.id, { thumbnail_url: placeholder })
   }
 
-  const randomizeAllPartial = () => ({ intensity: 5 + Math.random() * 20, kelvin: 2500 + Math.random() * 7500, angle: 20 + Math.random() * 40, penumbra: Math.random() * 0.8 })
+  const randomizeAllPartial = () => ({
+    intensity: 5 + Math.random() * 20,
+    kelvin: 2500 + Math.random() * 7500,
+    angle: 20 + Math.random() * 40,
+    penumbra: Math.random() * 0.8,
+  })
   const handleLightChange = (id: number, v: Partial<Omit<Light, "id">>) => setLights((ls) => ls.map((l) => (l.id === id ? { ...l, ...v } : l)))
   const addLight = () => {
     if (lights.length >= 5) return
-    const nl: Light = { id: Date.now(), visible: true, position: [-2, 3, 2], targetPosition: [0, 0, 0], intensity: 3, kelvin: 5500, decay: 1, angle: 45, penumbra: 0.5 }
+    const nl: Light = {
+      id: Date.now(),
+      visible: true,
+      position: [-2, 3, 2],
+      targetPosition: [0, 0, 0],
+      intensity: 3,
+      kelvin: 5500,
+      decay: 1,
+      angle: 45,
+      penumbra: 0.5,
+    }
     setLights((ls) => [...ls, nl])
     setSelectedLightId(nl.id)
   }
@@ -382,7 +397,7 @@ export default function GalleryPage() {
         selectedLightId === null ? setLights((ls) => ls.map((l) => ({ ...l, ...randomizeAllPartial() }))) : handleLightChange(selectedLightId, randomizeAllPartial())
       }
       if (k === "arrowright" || k === "arrowleft") {
-        const ms = gallery?.models ?? []
+        const ms = gridModels
         if (!ms.length) return
         const i = ms.findIndex((m) => m.id === modelId)
         if (i === -1) return
@@ -390,7 +405,7 @@ export default function GalleryPage() {
         updateQuery({ modelId: ms[ni].id })
       }
     },
-    [gallery?.models, modelId, selectedLightId],
+    [gridModels, modelId, selectedLightId],
   )
   useEffect(() => {
     window.addEventListener("keydown", onKey)
@@ -434,9 +449,10 @@ export default function GalleryPage() {
   }, [environmentEnabled, bgType, bgColor1, bgColor2, bgImage])
 
   const [isNewFolderDialogOpen, setIsNewFolderDialogOpen] = useState(false)
-  const [renameItem, setRenameItem] = useState<GalleryItem | null>(null)
+  const [renameItem, setRenameItem] = useState<Model | null>(null)
   const [editingFolder, setEditingFolder] = useState<Folder | null>(null)
 
+  // ======= Viewer =======
   if (modelId) {
     if (!selectedModel) return <div className="w-full h-screen" />
     return (
@@ -539,7 +555,7 @@ export default function GalleryPage() {
               onBgColor2Change={setBgColor2}
               bgImage={bgImage}
               onBgImageChange={setBgImage}
-              // materials
+              // material override & mode
               materialMode={materialMode}
               onMaterialModeChange={setMaterialMode}
               matOverrideEnabled={matOverrideEnabled}
@@ -599,7 +615,7 @@ export default function GalleryPage() {
     )
   }
 
-  // === Simplified landing (no sidebar) ===
+  // ======= Simplified landing (no sidebar; All models by default) =======
   return (
     <div className="min-h-screen bg-black text-white relative">
       {/* top bar */}
@@ -657,10 +673,7 @@ export default function GalleryPage() {
             {(["all", "models", "public", "drafts"] as Pill[]).map((k) => (
               <button
                 key={k}
-                className={cn(
-                  "px-3 py-1.5 rounded-full text-sm",
-                  pill === k ? "bg-white text-black" : "bg-white/10 text-white/80 hover:bg-white/20",
-                )}
+                className={cn("px-3 py-1.5 rounded-full text-sm", pill === k ? "bg-white text-black" : "bg-white/10 text-white/80 hover:bg-white/20")}
                 onClick={() => setPill(k)}
               >
                 {k === "all" ? "All" : k[0].toUpperCase() + k.slice(1)}
@@ -701,7 +714,7 @@ export default function GalleryPage() {
             {filteredItems.map((item) => (
               <ItemContextMenu
                 key={item.id}
-                item={item}
+                item={item as unknown as GalleryItem}
                 onRename={() => setRenameItem(item)}
                 onDelete={() => {
                   setSelectedItems(new Set([item.id]))
@@ -716,32 +729,25 @@ export default function GalleryPage() {
               >
                 <div
                   onClick={(e) => handleItemClick(e, item)}
-                  onDoubleClick={() => item.type === "model" && handleModelClick(item)}
+                  onDoubleClick={() => handleModelClick(item)}
                   className={cn(
                     "group relative aspect-square rounded-lg overflow-hidden cursor-pointer transition-all duration-200 bg-white/5",
                     selectedItems.has(item.id) && "ring-2 ring-white ring-offset-[3px] ring-offset-black",
                   )}
                 >
-                  {item.type === "folder" ? (
-                    <div className="w-full h-full flex flex-col items-center justify-center bg-white/5">
-                      <FolderIcon className="w-1/3 h-1/3 text-white/50" />
-                      <p className="text-sm font-semibold truncate mt-2 text-center w-full px-2">{item.name}</p>
+                  <>
+                    <img
+                      src={item.thumbnail_url || "/placeholder.svg"}
+                      alt={item.name}
+                      className="w-full h-full object-contain transition-transform duration-300 group-hover:scale-110"
+                      onError={(e) => {
+                        ; (e.target as HTMLImageElement).src = `/placeholder.svg?width=400&height=400&query=error`
+                      }}
+                    />
+                    <div className="absolute inset-0 bg-black/60 opacity-0 group-hover:opacity-100 transition-opacity duration-300 flex items-end p-2">
+                      <p className="text-sm font-semibold truncate text-white">{item.name}</p>
                     </div>
-                  ) : (
-                    <>
-                      <img
-                        src={item.thumbnail_url || "/placeholder.svg"}
-                        alt={item.name}
-                        className="w-full h-full object-contain transition-transform duration-300 group-hover:scale-110"
-                        onError={(e) => {
-                          ; (e.target as HTMLImageElement).src = `/placeholder.svg?width=400&height=400&query=error`
-                        }}
-                      />
-                      <div className="absolute inset-0 bg-black/60 opacity-0 group-hover:opacity-100 transition-opacity duration-300 flex items-end p-2">
-                        <p className="text-sm font-semibold truncate text-white">{item.name}</p>
-                      </div>
-                    </>
-                  )}
+                  </>
                   <div className={cn("absolute top-2 left-2 transition-opacity", selectedItems.has(item.id) ? "opacity-100" : "opacity-0 group-hover:opacity-100")}>
                     <Checkbox
                       checked={selectedItems.has(item.id)}
@@ -753,7 +759,7 @@ export default function GalleryPage() {
                       className="bg-black/50 border-white/50 data-[state=checked]:bg-white data-[state=checked]:text-black"
                     />
                   </div>
-                  {item.type === "model" && <div className="absolute bottom-2 left-2">{item.is_public ? <Globe className="h-4 w-4 text-white/70" /> : <Lock className="h-4 w-4 text-white/70" />}</div>}
+                  <div className="absolute bottom-2 left-2">{item.is_public ? <Globe className="h-4 w-4 text-white/70" /> : <Lock className="h-4 w-4 text-white/70" />}</div>
                 </div>
               </ItemContextMenu>
             ))}
@@ -779,8 +785,8 @@ export default function GalleryPage() {
           onSetPublic={handleBulkSetPublic}
           onDownload={() => {
             const models = Array.from(selectedItems)
-              .map((id) => galleryItems.find((i) => i.id === id))
-              .filter((i): i is Model & { type: "model" } => !!i && i.type === "model")
+              .map((id) => gridModels.find((i) => i.id === id))
+              .filter((i): i is Model & { type: "model" } => !!i)
             models.forEach((m) => {
               const a = document.createElement("a")
               a.href = m.model_url
@@ -790,7 +796,7 @@ export default function GalleryPage() {
               document.body.removeChild(a)
             })
           }}
-          allItems={galleryItems}
+          allItems={gridModels as unknown as GalleryItem[]}
           selectedIds={selectedItems}
           allFolders={allFolders}
           currentFolderId={currentFolderId}
@@ -805,7 +811,7 @@ export default function GalleryPage() {
           mutate(galleryUrl)
         }}
       />
-      {renameItem && <RenameDialog item={renameItem} onOpenChange={() => setRenameItem(null)} onRename={handleRename} />}
+      {renameItem && <RenameDialog item={renameItem as any} onOpenChange={() => setRenameItem(null)} onRename={handleRename} />}
       {editingFolder && (
         <FolderDescriptionDialog
           folder={editingFolder}
