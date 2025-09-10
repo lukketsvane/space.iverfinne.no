@@ -1,3 +1,4 @@
+// === /workspaces/space.iverfinne.no/types/index.ts ===
 export interface Light {
   id: number
   visible: boolean
@@ -24,7 +25,6 @@ export interface ViewSettings {
   bgColor1: string
   bgColor2: string
   bgImage: string | null
-  fieldOfView: number
   cameraPosition: [number, number, number] | null
   cameraTarget: [number, number, number] | null
   materialMode: "pbr" | "normal" | "white"

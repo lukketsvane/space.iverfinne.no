@@ -1,3 +1,4 @@
+// === /workspaces/space.iverfinne.no/lib/lighting-presets.ts ===
 import type { Light } from "@/types";
 
 type LightPreset = Omit<Light, "id" | "visible">
@@ -6,7 +7,8 @@ export const lightingPresets: { name: string; lights: LightPreset[] }[] = [
   {
     name: "3-Point",
     lights: [
-      { position: [-2.5, 2.2, 3.2], targetPosition: [0, 0.6, 0], intensity: 22, kelvin: 5600, decay: 1.6, angle: 38, penumbra: 0.4 },
+      // Increased key light intensity for stronger default
+      { position: [-2.5, 2.2, 3.2], targetPosition: [0, 0.6, 0], intensity: 28, kelvin: 5600, decay: 1.6, angle: 38, penumbra: 0.4 },
       { position: [2.8, 1.2, 2.2], targetPosition: [0, 0.6, 0], intensity: 8, kelvin: 4200, decay: 2.0, angle: 55, penumbra: 0.7 },
       { position: [0.0, 2.0, -2.4], targetPosition: [0, 0.4, 0], intensity: 18, kelvin: 7000, decay: 1.8, angle: 50, penumbra: 0.5 },
     ],
