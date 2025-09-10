@@ -25,9 +25,18 @@ export interface ViewSettings {
   bgColor1: string
   bgColor2: string
   bgImage: string | null
+  /** kept for backward compatibility, not used */
+  fieldOfView?: number
   cameraPosition: [number, number, number] | null
   cameraTarget: [number, number, number] | null
   materialMode: "pbr" | "normal" | "white"
+  /** NEW: UI material override */
+  materialOverride?: {
+    enabled: boolean
+    color: string
+    metalness: number
+    roughness: number
+  }
 }
 
 export interface Model {

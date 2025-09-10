@@ -147,6 +147,7 @@ export interface SettingsPanelProps {
     onThumbnailUpload: (file: File) => void
     onCaptureThumbnail: () => void
     onDeleteThumbnail: () => void
+    // lights
     lights: Light[]
     onLightChange: (id: number, newValues: Partial<Omit<Light, "id">>) => void
     addLight: () => void
@@ -158,6 +159,7 @@ export interface SettingsPanelProps {
     onFocusLight: (id: number) => void
     lightsEnabled: boolean
     onLightsEnabledChange: (enabled: boolean) => void
+    // environment
     environmentEnabled: boolean
     onEnvironmentEnabledChange: (enabled: boolean) => void
     bloomEnabled: boolean
@@ -170,9 +172,22 @@ export interface SettingsPanelProps {
     onBgColor2Change: (value: string) => void
     bgImage: string | null
     onBgImageChange: (value: string | null) => void
+    // materials
+    materialMode: "pbr" | "normal" | "white"
+    onMaterialModeChange: (m: "pbr" | "normal" | "white") => void
+    matOverrideEnabled: boolean
+    onMatOverrideEnabledChange: (v: boolean) => void
+    matBaseColor: string
+    onMatBaseColorChange: (v: string) => void
+    matMetalness: number
+    onMatMetalnessChange: (v: number) => void
+    matRoughness: number
+    onMatRoughnessChange: (v: number) => void
+    // view
     onSaveView: () => void
     onDeleteView: () => void
     onResetView: () => void
+    // presets
     onApplyPreset: (name: string) => void
     presets: string[]
 }
@@ -185,6 +200,7 @@ export function SettingsPanel(p: SettingsPanelProps) {
         onThumbnailUpload,
         onCaptureThumbnail,
         onDeleteThumbnail,
+        // lights
         lights,
         onLightChange,
         addLight,
@@ -196,6 +212,7 @@ export function SettingsPanel(p: SettingsPanelProps) {
         onFocusLight,
         lightsEnabled,
         onLightsEnabledChange,
+        // env
         environmentEnabled,
         onEnvironmentEnabledChange,
         bloomEnabled,
@@ -208,9 +225,22 @@ export function SettingsPanel(p: SettingsPanelProps) {
         onBgColor2Change,
         bgImage,
         onBgImageChange,
+        // materials
+        materialMode,
+        onMaterialModeChange,
+        matOverrideEnabled,
+        onMatOverrideEnabledChange,
+        matBaseColor,
+        onMatBaseColorChange,
+        matMetalness,
+        onMatMetalnessChange,
+        matRoughness,
+        onMatRoughnessChange,
+        // view
         onSaveView,
         onDeleteView,
         onResetView,
+        // presets
         onApplyPreset,
         presets,
     } = p
@@ -232,6 +262,7 @@ export function SettingsPanel(p: SettingsPanelProps) {
     return (
         <div className="px-4 pb-4 flex flex-col h-full text-white overflow-y-auto">
             <div className="space-y-4 flex-1 overflow-y-auto pr-2 -mr-2">
+                {/* Model controls */}
                 <div className="space-y-2">
                     <div className="flex items-center justify-between text-xs">
                         <label>Name</label>
@@ -271,7 +302,52 @@ export function SettingsPanel(p: SettingsPanelProps) {
 
                 <Separator className="bg-white/20" />
 
-                {/* Lights section (collapsed by default) */}
+                {/* Materials */}
+                <div className="space-y-3">
+                    <div className="flex items-center justify-between">
+                        <h3 className="text-sm font-semibold">Material</h3>
+                        <div className="flex items-center gap-2">
+                            <Select value={materialMode} onValueChange={(v: any) => onMaterialModeChange(v)}>
+                                <SelectTrigger className="h-6 text-xs bg-white/10 border-white/30 w-28">
+                                    <SelectValue placeholder="Mode" />
+                                </SelectTrigger>
+                                <SelectContent>
+                                    <SelectItem value="white">White</SelectItem>
+                                    <SelectItem value="pbr">PBR</SelectItem>
+                                    <SelectItem value="normal">Normal</SelectItem>
+                                </SelectContent>
+                            </Select>
+                        </div>
+                    </div>
+
+                    <div className="space-y-2 bg-white/5 p-3 rounded-md">
+                        <div className="flex items-center justify-between text-xs">
+                            <label>Override</label>
+                            <Switch checked={matOverrideEnabled} onCheckedChange={onMatOverrideEnabledChange} />
+                        </div>
+
+                        {matOverrideEnabled && (
+                            <>
+                                <div className="flex items-center justify-between text-xs">
+                                    <label>Base Color</label>
+                                    <input type="color" value={matBaseColor} onChange={(e) => onMatBaseColorChange(e.target.value)} className="w-6 h-6 p-0 bg-transparent border-none" />
+                                </div>
+                                <div className="flex items-center justify-between text-xs">
+                                    <label>Metallic</label>
+                                    <Slider value={[matMetalness]} onValueChange={([v]) => onMatMetalnessChange(v)} min={0} max={1} step={0.01} className="w-2/3" />
+                                </div>
+                                <div className="flex items-center justify-between text-xs">
+                                    <label>Roughness</label>
+                                    <Slider value={[matRoughness]} onValueChange={([v]) => onMatRoughnessChange(v)} min={0} max={1} step={0.01} className="w-2/3" />
+                                </div>
+                            </>
+                        )}
+                    </div>
+                </div>
+
+                <Separator className="bg-white/20" />
+
+                {/* Lights (collapsed by default) */}
                 <div className="space-y-3">
                     <div className="flex items-center justify-between cursor-pointer" onClick={() => setLightsSectionOpen((s) => !s)}>
                         <h3 className="text-sm font-semibold">Lights</h3>
@@ -289,7 +365,7 @@ export function SettingsPanel(p: SettingsPanelProps) {
                                         <SelectTrigger className="h-6 text-xs bg-white/10 border-white/30 w-2/3">
                                             <SelectValue placeholder="Choose preset" />
                                         </SelectTrigger>
-                                        <SelectContent>{presets.map((x) => <SelectItem key={x} value={x}>{x}</SelectItem>)}</SelectContent>
+                                        <SelectContent>{p.presets.map((x) => <SelectItem key={x} value={x}>{x}</SelectItem>)}</SelectContent>
                                     </Select>
                                     <Button variant="ghost" size="sm" className="h-6" onClick={() => preset && onApplyPreset(preset)}>
                                         Apply
@@ -332,6 +408,7 @@ export function SettingsPanel(p: SettingsPanelProps) {
 
                 <Separator className="bg-white/20" />
 
+                {/* Environment */}
                 <div className="space-y-2">
                     <div className="flex items-center justify-between">
                         <h3 className="text-sm font-semibold">Environment</h3>
@@ -387,6 +464,7 @@ export function SettingsPanel(p: SettingsPanelProps) {
                     )}
                 </div>
 
+                {/* View actions */}
                 <div className="flex items-center justify-end gap-2">
                     <Button variant="ghost" size="icon" className="h-6 w-6" disabled={!model.view_settings} onClick={onDeleteView}>
                         <Trash2 className="h-3 w-3" />

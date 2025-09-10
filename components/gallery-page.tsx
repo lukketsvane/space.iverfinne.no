@@ -1,4 +1,3 @@
-// === /workspaces/space.iverfinne.no/components/gallery-page.tsx ===
 "use client"
 
 import { BulkActionBar } from "@/components/gallery/bulk-action-bar"
@@ -85,6 +84,12 @@ export default function GalleryPage() {
   const [lights, setLights] = useState<Light[]>([])
   const [selectedLightId, setSelectedLightId] = useState<number | null>(null)
 
+  // Material override state
+  const [matOverrideEnabled, setMatOverrideEnabled] = useState(false)
+  const [matBaseColor, setMatBaseColor] = useState<string>("#ffffff")
+  const [matMetalness, setMatMetalness] = useState<number>(0)
+  const [matRoughness, setMatRoughness] = useState<number>(0.5)
+
   const [isOrbitControlsEnabled, setIsOrbitControlsEnabled] = useState(true)
   const modelRef = useRef<THREE.Group>(null)
   const captureControllerRef = useRef<{ capture: () => Promise<File | null> }>(null)
@@ -108,6 +113,11 @@ export default function GalleryPage() {
       setBgColor2(s?.bgColor2 ?? "#1a1a1a")
       setBgImage(s?.bgImage ?? null)
       setMaterialMode(s?.materialMode ?? "white")
+      // material override
+      setMatOverrideEnabled(!!s?.materialOverride?.enabled)
+      setMatBaseColor(s?.materialOverride?.color ?? "#ffffff")
+      setMatMetalness(s?.materialOverride?.metalness ?? 0)
+      setMatRoughness(s?.materialOverride?.roughness ?? 0.5)
       setSelectedLightId(null)
     },
     [defaultLights],
@@ -152,11 +162,9 @@ export default function GalleryPage() {
           access: "public",
           handleUploadUrl: "/api/upload",
         })
-        // Some versions expose `url`, others `downloadUrl`
         const url = (blobRes as any).url || (blobRes as any).downloadUrl
         await handleModelUpdate(selectedModel.id, { thumbnail_url: `${url}?v=${Date.now()}` })
       } catch (err) {
-        // Fallback: at least show a local preview if upload route fails
         const fallbackUrl = URL.createObjectURL(file)
         await handleModelUpdate(selectedModel.id, { thumbnail_url: fallbackUrl })
       }
@@ -302,6 +310,12 @@ export default function GalleryPage() {
       cameraPosition: orbitControlsRef.current.object.position.toArray() as [number, number, number],
       cameraTarget: orbitControlsRef.current.target.toArray() as [number, number, number],
       materialMode,
+      materialOverride: {
+        enabled: matOverrideEnabled,
+        color: matBaseColor,
+        metalness: matMetalness,
+        roughness: matRoughness,
+      },
     }
     await handleModelUpdate(selectedModel.id, { view_settings: settings })
   }
@@ -421,8 +435,6 @@ export default function GalleryPage() {
   const [renameItem, setRenameItem] = useState<GalleryItem | null>(null)
   const [editingFolder, setEditingFolder] = useState<Folder | null>(null)
 
-  // --- Removed unify scale feature completely ---
-
   if (modelId) {
     if (!selectedModel) return <div className="w-full h-screen" />
     return (
@@ -431,7 +443,7 @@ export default function GalleryPage() {
           shadows
           gl={{ preserveDrawingBuffer: true, antialias: true, alpha: true }}
           onCreated={({ gl }) => {
-            gl.setClearAlpha(0) // transparent canvas so custom background shows
+            gl.setClearAlpha(0)
             gl.outputColorSpace = THREE.SRGBColorSpace
             gl.toneMapping = THREE.ACESFilmicToneMapping
             gl.toneMappingExposure = 1
@@ -450,7 +462,17 @@ export default function GalleryPage() {
           <Suspense fallback={null}>
             {lightsEnabled && lights.map((l) => <SpotLightInScene key={l.id} light={l} />)}
             <Bounds fit clip damping={6} margin={1.2} key={`${selectedModel.id}-${boundsKey}`}>
-              <ModelViewer ref={modelRef} modelUrl={selectedModel.model_url} materialMode={materialMode} />
+              <ModelViewer
+                ref={modelRef}
+                modelUrl={selectedModel.model_url}
+                materialMode={materialMode}
+                materialOverride={{
+                  enabled: matOverrideEnabled,
+                  color: matBaseColor,
+                  metalness: matMetalness,
+                  roughness: matRoughness,
+                }}
+              />
             </Bounds>
             {bloomEnabled && (
               <EffectComposer disableNormalPass>
@@ -486,6 +508,7 @@ export default function GalleryPage() {
               onThumbnailUpload={handleThumbnailUpload}
               onCaptureThumbnail={handleCaptureThumbnail}
               onDeleteThumbnail={handleDeleteThumbnail}
+              // lights
               lights={lights}
               onLightChange={handleLightChange}
               addLight={addLight}
@@ -497,6 +520,7 @@ export default function GalleryPage() {
               onFocusLight={focusLightOnModel}
               lightsEnabled={lightsEnabled}
               onLightsEnabledChange={setLightsEnabled}
+              // environment
               environmentEnabled={environmentEnabled}
               onEnvironmentEnabledChange={setEnvironmentEnabled}
               bloomEnabled={bloomEnabled}
@@ -509,9 +533,22 @@ export default function GalleryPage() {
               onBgColor2Change={setBgColor2}
               bgImage={bgImage}
               onBgImageChange={setBgImage}
+              // materials
+              materialMode={materialMode}
+              onMaterialModeChange={setMaterialMode}
+              matOverrideEnabled={matOverrideEnabled}
+              onMatOverrideEnabledChange={setMatOverrideEnabled}
+              matBaseColor={matBaseColor}
+              onMatBaseColorChange={setMatBaseColor}
+              matMetalness={matMetalness}
+              onMatMetalnessChange={setMatMetalness}
+              matRoughness={matRoughness}
+              onMatRoughnessChange={setMatRoughness}
+              // view
               onSaveView={handleSaveViewSettings}
               onDeleteView={handleDeleteViewSettings}
               onResetView={() => resetViewSettings(selectedModel.view_settings)}
+              // presets
               onApplyPreset={(n) => applyPreset(n)}
               presets={lightingPresets.map((p) => p.name)}
             />
