@@ -183,6 +183,14 @@ export interface SettingsPanelProps {
     onMatMetalnessChange: (v: number) => void
     matRoughness: number
     onMatRoughnessChange: (v: number) => void
+    matClearcoat: number
+    onMatClearcoatChange: (v: number) => void
+    matClearcoatRoughness: number
+    onMatClearcoatRoughnessChange: (v: number) => void
+    matIOR: number
+    onMatIORChange: (v: number) => void
+    matTransmission: number
+    onMatTransmissionChange: (v: number) => void
     // view
     onSaveView: () => void
     onDeleteView: () => void
@@ -236,6 +244,14 @@ export function SettingsPanel(p: SettingsPanelProps) {
         onMatMetalnessChange,
         matRoughness,
         onMatRoughnessChange,
+        matClearcoat,
+        onMatClearcoatChange,
+        matClearcoatRoughness,
+        onMatClearcoatRoughnessChange,
+        matIOR,
+        onMatIORChange,
+        matTransmission,
+        onMatTransmissionChange,
         // view
         onSaveView,
         onDeleteView,
@@ -322,7 +338,7 @@ export function SettingsPanel(p: SettingsPanelProps) {
 
                     <div className="space-y-2 bg-white/5 p-3 rounded-md">
                         <div className="flex items-center justify-between text-xs">
-                            <label>Override</label>
+                            <label>Override (Clay)</label>
                             <Switch checked={matOverrideEnabled} onCheckedChange={onMatOverrideEnabledChange} />
                         </div>
 
@@ -339,6 +355,22 @@ export function SettingsPanel(p: SettingsPanelProps) {
                                 <div className="flex items-center justify-between text-xs">
                                     <label>Roughness</label>
                                     <Slider value={[matRoughness]} onValueChange={([v]) => onMatRoughnessChange(v)} min={0} max={1} step={0.01} className="w-2/3" />
+                                </div>
+                                <div className="flex items-center justify-between text-xs">
+                                    <label>Clearcoat</label>
+                                    <Slider value={[matClearcoat]} onValueChange={([v]) => onMatClearcoatChange(v)} min={0} max={1} step={0.01} className="w-2/3" />
+                                </div>
+                                <div className="flex items-center justify-between text-xs">
+                                    <label>Clearcoat Rough.</label>
+                                    <Slider value={[matClearcoatRoughness]} onValueChange={([v]) => onMatClearcoatRoughnessChange(v)} min={0} max={1} step={0.01} className="w-2/3" />
+                                </div>
+                                <div className="flex items-center justify-between text-xs">
+                                    <label>IOR</label>
+                                    <Slider value={[matIOR]} onValueChange={([v]) => onMatIORChange(v)} min={1} max={2.333} step={0.01} className="w-2/3" />
+                                </div>
+                                <div className="flex items-center justify-between text-xs">
+                                    <label>Transmission</label>
+                                    <Slider value={[matTransmission]} onValueChange={([v]) => onMatTransmissionChange(v)} min={0} max={1} step={0.01} className="w-2/3" />
                                 </div>
                             </>
                         )}

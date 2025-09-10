@@ -8,7 +8,6 @@ import { Button } from "@/components/ui/button"
 import { Checkbox } from "@/components/ui/checkbox"
 import { DropdownMenu, DropdownMenuContent, DropdownMenuLabel, DropdownMenuRadioGroup, DropdownMenuRadioItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu"
 import { Input } from "@/components/ui/input"
-import { Sidebar, SidebarContent, SidebarHeader, SidebarInset, SidebarMenu, SidebarMenuButton, SidebarMenuItem, SidebarProvider, SidebarTrigger } from "@/components/ui/sidebar"
 import { Skeleton } from "@/components/ui/skeleton"
 import { lightingPresets } from "@/lib/lighting-presets"
 import { cn } from "@/lib/utils"
@@ -17,7 +16,7 @@ import { Bounds, OrbitControls, useGLTF } from "@react-three/drei"
 import { Canvas } from "@react-three/fiber"
 import { Bloom, EffectComposer } from "@react-three/postprocessing"
 import { upload } from "@vercel/blob/client"
-import { ChevronDown, ChevronLeft, ChevronRight, Download, FolderIcon, FolderPlus, Globe, Grid, Info, ListFilter, Lock, Palette, Search, Upload } from "lucide-react"
+import { ChevronDown, ChevronLeft, Download, FolderIcon, Globe, Info, ListFilter, Lock, Palette, Plus, Search, Upload } from "lucide-react"
 import { useRouter, useSearchParams } from "next/navigation"
 import type React from "react"
 import { Fragment, Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react"
@@ -27,6 +26,8 @@ import type { OrbitControls as OrbitControlsImpl } from "three-stdlib"
 
 useGLTF.setDecoderPath("https://www.gstatic.com/draco/v1/decoders/")
 const fetcher = (url: string) => fetch(url).then((res) => res.json())
+
+type Pill = "all" | "models" | "public" | "drafts"
 
 export default function GalleryPage() {
   const { mutate } = useSWRConfig()
@@ -39,6 +40,7 @@ export default function GalleryPage() {
   const [searchQuery, setSearchQuery] = useState("")
   const [sortOption, setSortOption] = useState("created_at-desc")
   const [selectedItems, setSelectedItems] = useState<Set<string>>(new Set())
+  const [pill, setPill] = useState<Pill>("all")
   const lastSelectedItem = useRef<string | null>(null)
 
   const [sortBy, sortOrder] = sortOption.split("-")
@@ -63,6 +65,12 @@ export default function GalleryPage() {
   const filteredItems = useMemo(() => {
     const q = searchQuery.toLowerCase()
     return galleryItems.filter((item) => {
+      // pill filtering
+      if (pill === "models" && item.type !== "model") return false
+      if (pill === "public" && !(item as any).is_public) return false
+      if (pill === "drafts" && (item as any).is_public) return false
+
+      // text filtering
       const nameMatch = item.name.toLowerCase().includes(q)
       if (searchQuery && item.type === "model") {
         const folderDescriptionMatch = gallery?.currentFolder?.description?.toLowerCase().includes(q)
@@ -70,7 +78,7 @@ export default function GalleryPage() {
       }
       return nameMatch
     })
-  }, [galleryItems, searchQuery, gallery?.currentFolder?.description])
+  }, [galleryItems, searchQuery, gallery?.currentFolder?.description, pill])
 
   const [materialMode, setMaterialMode] = useState<"pbr" | "normal" | "white">("white")
   const [isSettingsPanelOpen, setIsSettingsPanelOpen] = useState(true)
@@ -84,11 +92,15 @@ export default function GalleryPage() {
   const [lights, setLights] = useState<Light[]>([])
   const [selectedLightId, setSelectedLightId] = useState<number | null>(null)
 
-  // Material override state
+  // Material override state — defaults to "clay" look
   const [matOverrideEnabled, setMatOverrideEnabled] = useState(false)
-  const [matBaseColor, setMatBaseColor] = useState<string>("#ffffff")
+  const [matBaseColor, setMatBaseColor] = useState<string>("#e5e5e5")
   const [matMetalness, setMatMetalness] = useState<number>(0)
-  const [matRoughness, setMatRoughness] = useState<number>(0.5)
+  const [matRoughness, setMatRoughness] = useState<number>(0.6)
+  const [matClearcoat, setMatClearcoat] = useState<number>(0)
+  const [matClearcoatRough, setMatClearcoatRough] = useState<number>(0.6)
+  const [matIOR, setMatIOR] = useState<number>(1.5)
+  const [matTransmission, setMatTransmission] = useState<number>(0)
 
   const [isOrbitControlsEnabled, setIsOrbitControlsEnabled] = useState(true)
   const modelRef = useRef<THREE.Group>(null)
@@ -113,11 +125,17 @@ export default function GalleryPage() {
       setBgColor2(s?.bgColor2 ?? "#1a1a1a")
       setBgImage(s?.bgImage ?? null)
       setMaterialMode(s?.materialMode ?? "white")
+
       // material override
       setMatOverrideEnabled(!!s?.materialOverride?.enabled)
-      setMatBaseColor(s?.materialOverride?.color ?? "#ffffff")
+      setMatBaseColor(s?.materialOverride?.color ?? "#e5e5e5")
       setMatMetalness(s?.materialOverride?.metalness ?? 0)
-      setMatRoughness(s?.materialOverride?.roughness ?? 0.5)
+      setMatRoughness(s?.materialOverride?.roughness ?? 0.6)
+      setMatClearcoat(s?.materialOverride?.clearcoat ?? 0)
+      setMatClearcoatRough(s?.materialOverride?.clearcoatRoughness ?? 0.6)
+      setMatIOR(s?.materialOverride?.ior ?? 1.5)
+      setMatTransmission(s?.materialOverride?.transmission ?? 0)
+
       setSelectedLightId(null)
     },
     [defaultLights],
@@ -158,13 +176,10 @@ export default function GalleryPage() {
       const ext = (fromName || fromType || "png").replace(/[^a-z0-9]/gi, "")
       const pathname = `thumbnails/${selectedModel.id}-${Date.now()}.${ext || "png"}`
       try {
-        const blobRes = await upload(pathname, file, {
-          access: "public",
-          handleUploadUrl: "/api/upload",
-        })
+        const blobRes = await upload(pathname, file, { access: "public", handleUploadUrl: "/api/upload" })
         const url = (blobRes as any).url || (blobRes as any).downloadUrl
         await handleModelUpdate(selectedModel.id, { thumbnail_url: `${url}?v=${Date.now()}` })
-      } catch (err) {
+      } catch {
         const fallbackUrl = URL.createObjectURL(file)
         await handleModelUpdate(selectedModel.id, { thumbnail_url: fallbackUrl })
       }
@@ -186,14 +201,6 @@ export default function GalleryPage() {
     }
   }, [selectedModel, handleCaptureThumbnail])
 
-  const handleNavigateToFolder = (folderId: string) => {
-    updateQuery({ folderId, modelId: null })
-    setSelectedItems(new Set())
-  }
-  const handleBreadcrumbClick = (folderId: string | null) => {
-    updateQuery({ folderId, modelId: null })
-    setSelectedItems(new Set())
-  }
   const handleModelClick = (m: Model) => updateQuery({ modelId: m.id })
   const handleCloseViewer = () => updateQuery({ modelId: null })
 
@@ -267,18 +274,9 @@ export default function GalleryPage() {
     setSelectedItems(new Set())
   }
 
-  const handleBulkMove = async (targetFolderId: string | null) => {
-    await bulkAct(
-      Array.from(selectedItems),
-      (id, type) =>
-        fetch(type === "folder" ? `/api/folders/${id}` : `/api/models/${id}`, {
-          method: "PATCH",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(type === "folder" ? { parent_id: targetFolderId } : { folder_id: targetFolderId }),
-        }).then(() => { }),
-    )
-    if (Array.from(selectedItems).includes(modelId || "") && targetFolderId !== currentFolderId) handleCloseViewer()
-    setSelectedItems(new Set())
+  const handleBulkMove = async (_targetFolderId: string | null) => {
+    // sidebar is gone; moving between folders is out-of-scope in this simplified grid
+    return
   }
 
   const handleBulkSetPublic = async (isPublic: boolean) => {
@@ -315,6 +313,10 @@ export default function GalleryPage() {
         color: matBaseColor,
         metalness: matMetalness,
         roughness: matRoughness,
+        clearcoat: matClearcoat,
+        clearcoatRoughness: matClearcoatRough,
+        ior: matIOR,
+        transmission: matTransmission,
       },
     }
     await handleModelUpdate(selectedModel.id, { view_settings: settings })
@@ -471,6 +473,10 @@ export default function GalleryPage() {
                   color: matBaseColor,
                   metalness: matMetalness,
                   roughness: matRoughness,
+                  clearcoat: matClearcoat,
+                  clearcoatRoughness: matClearcoatRough,
+                  ior: matIOR,
+                  transmission: matTransmission,
                 }}
               />
             </Bounds>
@@ -544,6 +550,14 @@ export default function GalleryPage() {
               onMatMetalnessChange={setMatMetalness}
               matRoughness={matRoughness}
               onMatRoughnessChange={setMatRoughness}
+              matClearcoat={matClearcoat}
+              onMatClearcoatChange={setMatClearcoat}
+              matClearcoatRoughness={matClearcoatRough}
+              onMatClearcoatRoughnessChange={setMatClearcoatRough}
+              matIOR={matIOR}
+              onMatIORChange={setMatIOR}
+              matTransmission={matTransmission}
+              onMatTransmissionChange={setMatTransmission}
               // view
               onSaveView={handleSaveViewSettings}
               onDeleteView={handleDeleteViewSettings}
@@ -585,208 +599,203 @@ export default function GalleryPage() {
     )
   }
 
+  // === Simplified landing (no sidebar) ===
   return (
-    <div className="bg-background text-foreground h-full flex flex-col">
-      <SidebarProvider defaultOpen>
-        <Sidebar collapsible="icon" variant="floating">
-          <SidebarHeader>
-            <div className="flex items-center gap-2 group-data-[collapsible=icon]:justify-center">
-              <SidebarTrigger />
-              <h1 className="font-semibold text-lg group-data-[collapsible=icon]:hidden">My Models</h1>
-            </div>
-          </SidebarHeader>
-          <SidebarContent>
-            <SidebarMenu>
-              <SidebarMenuItem>
-                <SidebarMenuButton onClick={() => document.querySelector<HTMLInputElement>('input[type="file"]')?.click()} tooltip="Upload Models">
-                  <Upload />
-                  <span>Upload</span>
-                </SidebarMenuButton>
-              </SidebarMenuItem>
-              <SidebarMenuItem>
-                <SidebarMenuButton onClick={() => handleBreadcrumbClick(null)} isActive={currentFolderId === null} tooltip="Assets">
-                  <Grid />
-                  <span>Assets</span>
-                </SidebarMenuButton>
-              </SidebarMenuItem>
-              <SidebarMenuItem>
-                <SidebarMenuButton onClick={() => setIsNewFolderDialogOpen(true)} tooltip="New Folder">
-                  <FolderPlus />
-                  <span>New Folder</span>
-                </SidebarMenuButton>
-              </SidebarMenuItem>
-            </SidebarMenu>
-          </SidebarContent>
-        </Sidebar>
-        <SidebarInset>
-          <header className="flex items-center justify-between p-4 border-b gap-4">
-            <div className="flex items-center text-sm">
-              {breadcrumbs.map((crumb, index) => (
-                <Fragment key={crumb.id || "root"}>
-                  <button onClick={() => handleBreadcrumbClick(crumb.id)} className="hover:underline disabled:text-foreground disabled:no-underline" disabled={index === breadcrumbs.length - 1}>
-                    {crumb.name}
-                  </button>
-                  {index === breadcrumbs.length - 1 && gallery?.currentFolder && (
-                    <Button variant="ghost" size="icon" className="h-6 w-6 ml-1" onClick={() => setEditingFolder(gallery.currentFolder)}>
-                      <Info className="h-4 w-4" />
-                    </Button>
-                  )}
-                  {index < breadcrumbs.length - 1 && <ChevronRight className="h-4 w-4 mx-1 text-muted-foreground" />}
-                </Fragment>
-              ))}
-            </div>
-            <div className="flex items-center gap-4">
-              <div className="relative">
-                <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-                <Input type="search" placeholder="Search..." className="pl-8 w-48 md:w-64" value={searchQuery} onChange={(e) => setSearchQuery(e.target.value)} />
-              </div>
-              <DropdownMenu>
-                <DropdownMenuTrigger asChild>
-                  <Button variant="outline" size="icon" className="shrink-0 bg-transparent">
-                    <ListFilter className="h-4 w-4" />
-                    <span className="sr-only">Sort</span>
-                  </Button>
-                </DropdownMenuTrigger>
-                <DropdownMenuContent align="end">
-                  <DropdownMenuLabel>Sort by</DropdownMenuLabel>
-                  <DropdownMenuRadioGroup value={sortOption} onValueChange={setSortOption}>
-                    <DropdownMenuRadioItem value="created_at-desc">Most Recent</DropdownMenuRadioItem>
-                    <DropdownMenuRadioItem value="name-asc">Name (A-Z)</DropdownMenuRadioItem>
-                    <DropdownMenuRadioItem value="name-desc">Name (Z-A)</DropdownMenuRadioItem>
-                  </DropdownMenuRadioGroup>
-                </DropdownMenuContent>
-              </DropdownMenu>
-            </div>
-          </header>
-
-          <main
-            className="relative flex-1 p-4 md:p-8 overflow-y-auto"
-            onClick={() => setSelectedItems(new Set())}
-            onDrop={(e) => {
-              e.preventDefault()
-              handleUploadAction(e.dataTransfer.files)
-            }}
-            onDragOver={(e) => e.preventDefault()}
-          >
-            <input type="file" className="hidden" multiple accept=".glb" onChange={(e) => handleUploadAction(e.target.files)} />
-            {isLoading && (
-              <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-4">
-                {Array.from({ length: 18 }).map((_, i) => (
-                  <Skeleton key={i} className="aspect-square rounded-lg" />
-                ))}
-              </div>
-            )}
-            {error && <div className="text-center text-destructive">Failed to load gallery.</div>}
-            {!isLoading && filteredItems.length === 0 && (
-              <div className="text-center text-muted-foreground flex flex-col items-center justify-center h-full pt-20">
-                <FolderIcon size={64} className="mb-4" />
-                <h2 className="text-2xl font-semibold">This folder is empty</h2>
-                <p className="mt-2">Drag & drop .glb files here or use the upload button.</p>
-              </div>
-            )}
-            <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-4">
-              {filteredItems.map((item) => (
-                <ItemContextMenu
-                  key={item.id}
-                  item={item}
-                  onRename={() => setRenameItem(item)}
-                  onDelete={() => {
-                    setSelectedItems(new Set([item.id]))
-                    handleBulkDelete()
-                  }}
-                  onMove={(dst) => {
-                    setSelectedItems(new Set([item.id]))
-                    handleBulkMove(dst)
-                  }}
-                  onSetPublic={(p) => {
-                    setSelectedItems(new Set([item.id]))
-                    handleBulkSetPublic(p)
-                  }}
-                  allFolders={allFolders}
-                >
-                  <div
-                    onClick={(e) => handleItemClick(e, item)}
-                    onDoubleClick={() => (item.type === "folder" ? handleNavigateToFolder(item.id) : handleModelClick(item))}
-                    className={cn(
-                      "group relative aspect-square rounded-lg overflow-hidden cursor-pointer transition-all duration-200",
-                      selectedItems.has(item.id) && "ring-2 ring-primary ring-offset-2 ring-offset-background",
-                    )}
-                  >
-                    {item.type === "folder" ? (
-                      <div className="w-full h-full flex flex-col items-center justify-center bg-muted hover:bg-secondary transition-colors">
-                        <FolderIcon className="w-1/3 h-1/3 text-foreground/50" />
-                        <p className="text-sm font-semibold truncate mt-2 text-center w-full px-2">{item.name}</p>
-                      </div>
-                    ) : (
-                      <>
-                        <img
-                          src={item.thumbnail_url || "/placeholder.svg"}
-                          alt={item.name}
-                          className="w-full h-full object-contain transition-transform duration-300 group-hover:scale-110 bg-muted"
-                          onError={(e) => {
-                            ; (e.target as HTMLImageElement).src = `/placeholder.svg?width=400&height=400&query=error`
-                          }}
-                        />
-                        <div className="absolute inset-0 bg-black/60 opacity-0 group-hover:opacity-100 transition-opacity duration-300 flex items-end p-2">
-                          <p className="text-sm font-semibold truncate text-white">{item.name}</p>
-                        </div>
-                      </>
-                    )}
-                    <div className={cn("absolute top-2 left-2 transition-opacity", selectedItems.has(item.id) ? "opacity-100" : "opacity-0 group-hover:opacity-100")}>
-                      <Checkbox
-                        checked={selectedItems.has(item.id)}
-                        onCheckedChange={(c) => {
-                          const next = new Set(selectedItems)
-                          c ? next.add(item.id) : next.delete(item.id)
-                          setSelectedItems(next)
-                        }}
-                        className="bg-background/50 border-white/50 data-[state=checked]:bg-primary"
-                      />
-                    </div>
-                    <div className="absolute bottom-2 left-2">{item.is_public ? <Globe className="h-4 w-4 text-white/70" /> : <Lock className="h-4 w-4 text-white/70" />}</div>
-                  </div>
-                </ItemContextMenu>
-              ))}
-              {!isLoading && !searchQuery && (
-                <div
-                  onClick={() => document.querySelector<HTMLInputElement>('input[type="file"]')?.click()}
-                  className="group relative aspect-square rounded-lg border-2 border-dashed border-muted-foreground/50 flex flex-col items-center justify-center text-muted-foreground hover:bg-muted hover:border-primary hover:text-primary transition-colors cursor-pointer"
-                >
-                  <Upload className="w-1/3 h-1/3 transition-transform group-hover:scale-110" />
-                  <p className="text-sm font-semibold mt-2">Upload Models</p>
-                </div>
-              )}
-            </div>
-          </main>
-
-          {selectedItems.size > 0 && (
-            <BulkActionBar
-              selectedCount={selectedItems.size}
-              onClear={() => setSelectedItems(new Set())}
-              onDelete={handleBulkDelete}
-              onMove={handleBulkMove}
-              onSetPublic={handleBulkSetPublic}
-              onDownload={() => {
-                const models = Array.from(selectedItems)
-                  .map((id) => galleryItems.find((i) => i.id === id))
-                  .filter((i): i is Model & { type: "model" } => !!i && i.type === "model")
-                models.forEach((m) => {
-                  const a = document.createElement("a")
-                  a.href = m.model_url
-                  a.download = `${m.name}.glb`
-                  document.body.appendChild(a)
-                  a.click()
-                  document.body.removeChild(a)
-                })
-              }}
-              allItems={galleryItems}
-              selectedIds={selectedItems}
-              allFolders={allFolders}
-              currentFolderId={currentFolderId}
-            />
+    <div className="min-h-screen bg-black text-white relative">
+      {/* top bar */}
+      <div className="flex items-center justify-between px-4 md:px-8 py-4">
+        <div className="text-sm text-white/70">
+          {breadcrumbs.map((c, i) => (
+            <Fragment key={c.id ?? "root"}>
+              <span className={i === breadcrumbs.length - 1 ? "text-white" : "text-white/60"}>{c.name}</span>
+              {i < breadcrumbs.length - 1 && <span className="mx-1 text-white/30">/</span>}
+            </Fragment>
+          ))}
+          {gallery?.currentFolder && (
+            <Button variant="ghost" size="icon" className="h-6 w-6 ml-2" onClick={() => setEditingFolder(gallery.currentFolder)}>
+              <Info className="h-4 w-4" />
+            </Button>
           )}
-        </SidebarInset>
-      </SidebarProvider>
+        </div>
+        <div className="flex items-center gap-2">
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <Button variant="outline" size="icon" className="h-8 w-8 border-white/20 bg-transparent">
+                <ListFilter className="h-4 w-4" />
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end">
+              <DropdownMenuLabel>Sort by</DropdownMenuLabel>
+              <DropdownMenuRadioGroup value={sortOption} onValueChange={setSortOption}>
+                <DropdownMenuRadioItem value="created_at-desc">Most Recent</DropdownMenuRadioItem>
+                <DropdownMenuRadioItem value="name-asc">Name (A-Z)</DropdownMenuRadioItem>
+                <DropdownMenuRadioItem value="name-desc">Name (Z-A)</DropdownMenuRadioItem>
+              </DropdownMenuRadioGroup>
+            </DropdownMenuContent>
+          </DropdownMenu>
+          <Button variant="secondary" size="icon" className="h-8 w-8 rounded-full" onClick={() => document.querySelector<HTMLInputElement>('input[type="file"]')?.click()}>
+            <Plus className="h-4 w-4" />
+          </Button>
+        </div>
+      </div>
+
+      {/* search hero */}
+      <div className={cn("px-4 md:px-8", filteredItems.length === 0 && !searchQuery ? "pt-24" : "pt-6")}>
+        <div className={cn("mx-auto", filteredItems.length === 0 && !searchQuery ? "max-w-2xl" : "max-w-4xl")}>
+          <div className={cn("relative", filteredItems.length === 0 && !searchQuery ? "" : "mb-4")}>
+            <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-5 w-5 text-white/50" />
+            <Input
+              type="search"
+              placeholder="Search for models, or tags..."
+              className="pl-11 pr-4 h-12 rounded-full bg-white/10 border-white/20 text-white placeholder:text-white/60"
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+            />
+          </div>
+
+          <div className="flex items-center gap-2 flex-wrap">
+            {(["all", "models", "public", "drafts"] as Pill[]).map((k) => (
+              <button
+                key={k}
+                className={cn(
+                  "px-3 py-1.5 rounded-full text-sm",
+                  pill === k ? "bg-white text-black" : "bg-white/10 text-white/80 hover:bg-white/20",
+                )}
+                onClick={() => setPill(k)}
+              >
+                {k === "all" ? "All" : k[0].toUpperCase() + k.slice(1)}
+              </button>
+            ))}
+          </div>
+        </div>
+      </div>
+
+      {/* grid */}
+      <main
+        className="relative px-4 md:px-8 pb-24"
+        onClick={() => setSelectedItems(new Set())}
+        onDrop={(e) => {
+          e.preventDefault()
+          handleUploadAction(e.dataTransfer.files)
+        }}
+        onDragOver={(e) => e.preventDefault()}
+      >
+        <input type="file" className="hidden" multiple accept=".glb" onChange={(e) => handleUploadAction(e.target.files)} />
+
+        {isLoading && (
+          <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 xl:grid-cols-6 gap-4 mt-6">
+            {Array.from({ length: 18 }).map((_, i) => (
+              <Skeleton key={i} className="aspect-square rounded-lg bg-white/10" />
+            ))}
+          </div>
+        )}
+
+        {error && <div className="text-center text-destructive mt-12">Failed to load gallery.</div>}
+
+        {!isLoading && filteredItems.length === 0 && searchQuery && (
+          <div className="text-center text-white/60 mt-10">No results.</div>
+        )}
+
+        {!isLoading && filteredItems.length > 0 && (
+          <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 xl:grid-cols-6 gap-4 mt-6">
+            {filteredItems.map((item) => (
+              <ItemContextMenu
+                key={item.id}
+                item={item}
+                onRename={() => setRenameItem(item)}
+                onDelete={() => {
+                  setSelectedItems(new Set([item.id]))
+                  handleBulkDelete()
+                }}
+                onMove={handleBulkMove}
+                onSetPublic={(p) => {
+                  setSelectedItems(new Set([item.id]))
+                  handleBulkSetPublic(p)
+                }}
+                allFolders={allFolders}
+              >
+                <div
+                  onClick={(e) => handleItemClick(e, item)}
+                  onDoubleClick={() => item.type === "model" && handleModelClick(item)}
+                  className={cn(
+                    "group relative aspect-square rounded-lg overflow-hidden cursor-pointer transition-all duration-200 bg-white/5",
+                    selectedItems.has(item.id) && "ring-2 ring-white ring-offset-[3px] ring-offset-black",
+                  )}
+                >
+                  {item.type === "folder" ? (
+                    <div className="w-full h-full flex flex-col items-center justify-center bg-white/5">
+                      <FolderIcon className="w-1/3 h-1/3 text-white/50" />
+                      <p className="text-sm font-semibold truncate mt-2 text-center w-full px-2">{item.name}</p>
+                    </div>
+                  ) : (
+                    <>
+                      <img
+                        src={item.thumbnail_url || "/placeholder.svg"}
+                        alt={item.name}
+                        className="w-full h-full object-contain transition-transform duration-300 group-hover:scale-110"
+                        onError={(e) => {
+                          ; (e.target as HTMLImageElement).src = `/placeholder.svg?width=400&height=400&query=error`
+                        }}
+                      />
+                      <div className="absolute inset-0 bg-black/60 opacity-0 group-hover:opacity-100 transition-opacity duration-300 flex items-end p-2">
+                        <p className="text-sm font-semibold truncate text-white">{item.name}</p>
+                      </div>
+                    </>
+                  )}
+                  <div className={cn("absolute top-2 left-2 transition-opacity", selectedItems.has(item.id) ? "opacity-100" : "opacity-0 group-hover:opacity-100")}>
+                    <Checkbox
+                      checked={selectedItems.has(item.id)}
+                      onCheckedChange={(c) => {
+                        const next = new Set(selectedItems)
+                        c ? next.add(item.id) : next.delete(item.id)
+                        setSelectedItems(next)
+                      }}
+                      className="bg-black/50 border-white/50 data-[state=checked]:bg-white data-[state=checked]:text-black"
+                    />
+                  </div>
+                  {item.type === "model" && <div className="absolute bottom-2 left-2">{item.is_public ? <Globe className="h-4 w-4 text-white/70" /> : <Lock className="h-4 w-4 text-white/70" />}</div>}
+                </div>
+              </ItemContextMenu>
+            ))}
+
+            {/* quick uploader card */}
+            <div
+              onClick={() => document.querySelector<HTMLInputElement>('input[type="file"]')?.click()}
+              className="group relative aspect-square rounded-lg border-2 border-dashed border-white/20 flex flex-col items-center justify-center text-white/60 hover:bg-white/5 hover:border-white/40 transition-colors cursor-pointer"
+            >
+              <Upload className="w-1/3 h-1/3 transition-transform group-hover:scale-110" />
+              <p className="text-sm font-semibold mt-2">Upload Models</p>
+            </div>
+          </div>
+        )}
+      </main>
+
+      {selectedItems.size > 0 && (
+        <BulkActionBar
+          selectedCount={selectedItems.size}
+          onClear={() => setSelectedItems(new Set())}
+          onDelete={handleBulkDelete}
+          onMove={handleBulkMove}
+          onSetPublic={handleBulkSetPublic}
+          onDownload={() => {
+            const models = Array.from(selectedItems)
+              .map((id) => galleryItems.find((i) => i.id === id))
+              .filter((i): i is Model & { type: "model" } => !!i && i.type === "model")
+            models.forEach((m) => {
+              const a = document.createElement("a")
+              a.href = m.model_url
+              a.download = `${m.name}.glb`
+              document.body.appendChild(a)
+              a.click()
+              document.body.removeChild(a)
+            })
+          }}
+          allItems={galleryItems}
+          selectedIds={selectedItems}
+          allFolders={allFolders}
+          currentFolderId={currentFolderId}
+        />
+      )}
 
       <NewFolderDialog
         open={isNewFolderDialogOpen}
