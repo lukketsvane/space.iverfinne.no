@@ -15,15 +15,44 @@ const mkWhite = (m: THREE.Material) =>
 
 const mkNormal = (_: THREE.Material) => new THREE.MeshNormalMaterial()
 
-const mkOverride = (color: string, metalness: number, roughness: number) =>
-    new THREE.MeshStandardMaterial({ color: new THREE.Color(color), metalness, roughness })
+const mkOverride = (o: {
+    color: string
+    metalness: number
+    roughness: number
+    clearcoat: number
+    clearcoatRoughness: number
+    ior: number
+    transmission: number
+}) => {
+    const mat = new THREE.MeshPhysicalMaterial({
+        color: new THREE.Color(o.color),
+        metalness: o.metalness,
+        roughness: o.roughness,
+        clearcoat: o.clearcoat,
+        clearcoatRoughness: o.clearcoatRoughness,
+        ior: o.ior,
+        transmission: o.transmission,
+    })
+    mat.toneMapped = true
+    mat.envMapIntensity = 1
+    return mat
+}
 
 export const ModelViewer = forwardRef<
     THREE.Group,
     {
         modelUrl: string
         materialMode: "pbr" | "normal" | "white"
-        materialOverride: { enabled: boolean; color: string; metalness: number; roughness: number }
+        materialOverride: {
+            enabled: boolean
+            color: string
+            metalness: number
+            roughness: number
+            clearcoat: number
+            clearcoatRoughness: number
+            ior: number
+            transmission: number
+        }
     }
 >(({ modelUrl, materialMode, materialOverride }, ref) => {
     const gltf = useGLTF(modelUrl)
@@ -33,7 +62,6 @@ export const ModelViewer = forwardRef<
         normals = useRef(new Map<string, THREE.Material | THREE.Material[]>()),
         overrides = useRef(new Map<string, THREE.Material | THREE.Material[]>())
 
-    // Initial prep
     useEffect(() => {
         const box = new THREE.Box3().setFromObject(scene),
             c = new THREE.Vector3()
@@ -50,7 +78,6 @@ export const ModelViewer = forwardRef<
             whites.current.set(mesh.uuid, w)
             normals.current.set(mesh.uuid, n)
         })
-        // cleanup on unmount
         return () => {
             ;[whites, normals, overrides].forEach((mapRef) => {
                 mapRef.current.forEach((mat) => {
@@ -62,7 +89,7 @@ export const ModelViewer = forwardRef<
         }
     }, [scene])
 
-    // Apply material mode (when override is NOT active)
+    // Apply material mode if override is off
     useEffect(() => {
         if (materialOverride.enabled) return
         scene.traverse((ch: any) => {
@@ -75,10 +102,9 @@ export const ModelViewer = forwardRef<
         })
     }, [scene, materialMode, materialOverride.enabled])
 
-    // Apply / update overrides
+    // Apply override ("clay"/physical)
     useEffect(() => {
         if (!materialOverride.enabled) return
-        // dispose old override materials
         overrides.current.forEach((mat) => {
             if (Array.isArray(mat)) mat.forEach((m) => m.dispose())
             else mat.dispose()
@@ -90,16 +116,34 @@ export const ModelViewer = forwardRef<
             const mesh = ch as THREE.Mesh
             const base = originals.current.get(mesh.uuid)
             if (Array.isArray(base)) {
-                const ov = base.map(() => mkOverride(materialOverride.color, materialOverride.metalness, materialOverride.roughness))
+                const ov = base.map(() =>
+                    mkOverride({
+                        color: materialOverride.color,
+                        metalness: materialOverride.metalness,
+                        roughness: materialOverride.roughness,
+                        clearcoat: materialOverride.clearcoat,
+                        clearcoatRoughness: materialOverride.clearcoatRoughness,
+                        ior: materialOverride.ior,
+                        transmission: materialOverride.transmission,
+                    }),
+                )
                 overrides.current.set(mesh.uuid, ov)
                 mesh.material = ov
             } else {
-                const ov = mkOverride(materialOverride.color, materialOverride.metalness, materialOverride.roughness)
+                const ov = mkOverride({
+                    color: materialOverride.color,
+                    metalness: materialOverride.metalness,
+                    roughness: materialOverride.roughness,
+                    clearcoat: materialOverride.clearcoat,
+                    clearcoatRoughness: materialOverride.clearcoatRoughness,
+                    ior: materialOverride.ior,
+                    transmission: materialOverride.transmission,
+                })
                 overrides.current.set(mesh.uuid, ov)
                 mesh.material = ov
             }
         })
-    }, [scene, materialOverride.enabled, materialOverride.color, materialOverride.metalness, materialOverride.roughness])
+    }, [scene, materialOverride])
 
     return <primitive ref={ref} object={scene} />
 })

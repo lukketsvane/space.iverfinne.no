@@ -30,12 +30,16 @@ export interface ViewSettings {
   cameraPosition: [number, number, number] | null
   cameraTarget: [number, number, number] | null
   materialMode: "pbr" | "normal" | "white"
-  /** NEW: UI material override */
+  /** Material override (clay/physical) */
   materialOverride?: {
     enabled: boolean
     color: string
     metalness: number
     roughness: number
+    clearcoat: number
+    clearcoatRoughness: number
+    ior: number
+    transmission: number
   }
 }
 
