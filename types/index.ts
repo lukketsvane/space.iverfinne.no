@@ -37,4 +37,36 @@ export interface ViewSettings {
     metalness: number
     roughness: number
     clearcoat: number
-    clearcoat
+    clearcoatRoughness: number
+    ior: number
+    transmission: number
+  }
+}
+
+export interface Model {
+  id: string
+  name: string
+  model_url: string
+  thumbnail_url: string
+  created_at: string
+  folder_id: string | null
+  is_public: boolean
+  view_settings: ViewSettings | null
+}
+
+export interface Folder {
+  id: string
+  name: string
+  parent_id: string | null
+  created_at: string
+  description?: string
+  is_public: boolean
+}
+
+export interface GalleryContents {
+  folders: Folder[]
+  models: Model[]
+  currentFolder: Folder | null
+}
+
+export type GalleryItem = ({ type: "folder" } & Folder) | ({ type: "model" } & Model)

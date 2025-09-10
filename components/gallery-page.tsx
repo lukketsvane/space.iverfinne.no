@@ -1,3 +1,4 @@
+// === /workspaces/space.iverfinne.no/components/gallery-page.tsx ===
 "use client"
 
 import { BulkActionBar } from "@/components/gallery/bulk-action-bar"
@@ -11,7 +12,7 @@ import { Input } from "@/components/ui/input"
 import { Skeleton } from "@/components/ui/skeleton"
 import { lightingPresets } from "@/lib/lighting-presets"
 import { cn } from "@/lib/utils"
-import type { Folder, GalleryItem, Light, Model, ViewSettings } from "@/types"
+import type { Folder, Light, Model, ViewSettings } from "@/types"
 import { Bounds, OrbitControls, useGLTF } from "@react-three/drei"
 import { Canvas } from "@react-three/fiber"
 import { Bloom, EffectComposer } from "@react-three/postprocessing"
@@ -72,12 +73,24 @@ export default function GalleryPage() {
   useEffect(() => {
     setBreadcrumbs(currentFolderId === null ? [{ id: null, name: "Assets" }] : [{ id: null, name: "Assets" }, ...(breadcrumbData || [])])
   }, [currentFolderId, breadcrumbData])
+  // replace the previous gridModels useMemo with this
 
   // models for the simplified grid (prefer true "all models" endpoint)
-  const gridModels: (Model & { type: "model" })[] = useMemo(
-    () => (allModels ?? gallery?.models ?? []).map((m) => ({ ...m, type: "model" as const })),
-    [allModels, gallery?.models],
-  )
+  const gridModels: (Model & { type: "model" })[] = useMemo(() => {
+    // normalize possible shapes from the API/SWR
+    const list: unknown =
+      Array.isArray(allModels)
+        ? allModels
+        : Array.isArray((allModels as any)?.models)
+          ? (allModels as any).models
+          : Array.isArray(gallery?.models)
+            ? gallery!.models
+            : [];
+
+    const safe: Model[] = Array.isArray(list) ? (list as Model[]) : [];
+    return safe.map((m) => ({ ...m, type: "model" as const }));
+  }, [allModels, gallery?.models]);
+
 
   const filteredItems = useMemo(() => {
     const q = searchQuery.toLowerCase()
@@ -615,7 +628,7 @@ export default function GalleryPage() {
     )
   }
 
-  // ======= Simplified landing (no sidebar; All models by default) =======
+  // === Simplified landing (no sidebar) ===
   return (
     <div className="min-h-screen bg-black text-white relative">
       {/* top bar */}
@@ -673,7 +686,10 @@ export default function GalleryPage() {
             {(["all", "models", "public", "drafts"] as Pill[]).map((k) => (
               <button
                 key={k}
-                className={cn("px-3 py-1.5 rounded-full text-sm", pill === k ? "bg-white text-black" : "bg-white/10 text-white/80 hover:bg-white/20")}
+                className={cn(
+                  "px-3 py-1.5 rounded-full text-sm",
+                  pill === k ? "bg-white text-black" : "bg-white/10 text-white/80 hover:bg-white/20",
+                )}
                 onClick={() => setPill(k)}
               >
                 {k === "all" ? "All" : k[0].toUpperCase() + k.slice(1)}
@@ -714,7 +730,7 @@ export default function GalleryPage() {
             {filteredItems.map((item) => (
               <ItemContextMenu
                 key={item.id}
-                item={item as unknown as GalleryItem}
+                item={item}
                 onRename={() => setRenameItem(item)}
                 onDelete={() => {
                   setSelectedItems(new Set([item.id]))
@@ -729,25 +745,32 @@ export default function GalleryPage() {
               >
                 <div
                   onClick={(e) => handleItemClick(e, item)}
-                  onDoubleClick={() => handleModelClick(item)}
+                  onDoubleClick={() => item.type === "model" && handleModelClick(item)}
                   className={cn(
                     "group relative aspect-square rounded-lg overflow-hidden cursor-pointer transition-all duration-200 bg-white/5",
                     selectedItems.has(item.id) && "ring-2 ring-white ring-offset-[3px] ring-offset-black",
                   )}
                 >
-                  <>
-                    <img
-                      src={item.thumbnail_url || "/placeholder.svg"}
-                      alt={item.name}
-                      className="w-full h-full object-contain transition-transform duration-300 group-hover:scale-110"
-                      onError={(e) => {
-                        ; (e.target as HTMLImageElement).src = `/placeholder.svg?width=400&height=400&query=error`
-                      }}
-                    />
-                    <div className="absolute inset-0 bg-black/60 opacity-0 group-hover:opacity-100 transition-opacity duration-300 flex items-end p-2">
-                      <p className="text-sm font-semibold truncate text-white">{item.name}</p>
+                  {item.type === "folder" ? (
+                    <div className="w-full h-full flex flex-col items-center justify-center bg-white/5">
+                      <FolderIcon className="w-1/3 h-1/3 text-white/50" />
+                      <p className="text-sm font-semibold truncate mt-2 text-center w-full px-2">{item.name}</p>
                     </div>
-                  </>
+                  ) : (
+                    <>
+                      <img
+                        src={item.thumbnail_url || "/placeholder.svg"}
+                        alt={item.name}
+                        className="w-full h-full object-contain transition-transform duration-300 group-hover:scale-110"
+                        onError={(e) => {
+                          ; (e.target as HTMLImageElement).src = `/placeholder.svg?width=400&height=400&query=error`
+                        }}
+                      />
+                      <div className="absolute inset-0 bg-black/60 opacity-0 group-hover:opacity-100 transition-opacity duration-300 flex items-end p-2">
+                        <p className="text-sm font-semibold truncate text-white">{item.name}</p>
+                      </div>
+                    </>
+                  )}
                   <div className={cn("absolute top-2 left-2 transition-opacity", selectedItems.has(item.id) ? "opacity-100" : "opacity-0 group-hover:opacity-100")}>
                     <Checkbox
                       checked={selectedItems.has(item.id)}
@@ -759,7 +782,7 @@ export default function GalleryPage() {
                       className="bg-black/50 border-white/50 data-[state=checked]:bg-white data-[state=checked]:text-black"
                     />
                   </div>
-                  <div className="absolute bottom-2 left-2">{item.is_public ? <Globe className="h-4 w-4 text-white/70" /> : <Lock className="h-4 w-4 text-white/70" />}</div>
+                  {item.type === "model" && <div className="absolute bottom-2 left-2">{item.is_public ? <Globe className="h-4 w-4 text-white/70" /> : <Lock className="h-4 w-4 text-white/70" />}</div>}
                 </div>
               </ItemContextMenu>
             ))}
@@ -777,6 +800,8 @@ export default function GalleryPage() {
       </main>
 
       {selectedItems.size > 0 && (
+        // In components/gallery-page.tsx, replace the BulkActionBar props block with this:
+
         <BulkActionBar
           selectedCount={selectedItems.size}
           onClear={() => setSelectedItems(new Set())}
@@ -796,11 +821,13 @@ export default function GalleryPage() {
               document.body.removeChild(a)
             })
           }}
+          // FIX: use gridModels instead of undefined galleryItems
           allItems={gridModels as unknown as GalleryItem[]}
           selectedIds={selectedItems}
           allFolders={allFolders}
           currentFolderId={currentFolderId}
         />
+
       )}
 
       <NewFolderDialog
@@ -811,7 +838,7 @@ export default function GalleryPage() {
           mutate(galleryUrl)
         }}
       />
-      {renameItem && <RenameDialog item={renameItem as any} onOpenChange={() => setRenameItem(null)} onRename={handleRename} />}
+      {renameItem && <RenameDialog item={renameItem} onOpenChange={() => setRenameItem(null)} onRename={handleRename} />}
       {editingFolder && (
         <FolderDescriptionDialog
           folder={editingFolder}
