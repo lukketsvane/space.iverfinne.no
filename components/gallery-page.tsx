@@ -9,6 +9,7 @@ import { Checkbox } from "@/components/ui/checkbox"
 import { DropdownMenu, DropdownMenuContent, DropdownMenuLabel, DropdownMenuRadioGroup, DropdownMenuRadioItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu"
 import { Input } from "@/components/ui/input"
 import { Skeleton } from "@/components/ui/skeleton"
+import { Switch } from "@/components/ui/switch"
 import { lightingPresets } from "@/lib/lighting-presets"
 import { cn } from "@/lib/utils"
 import type { Folder, GalleryItem, Light, Model, ViewSettings } from "@/types"
@@ -152,6 +153,9 @@ export default function GalleryPage() {
   const [boundsKey, setBoundsKey] = useState(0)
   const [isLightDragging, setIsLightDragging] = useState(false)
 
+  const [groundEnabled, setGroundEnabled] = useState(false)
+  const [groundY, setGroundY] = useState(0)
+
   const defaultLights: Light[] = useMemo(() => {
     const preset = lightingPresets.find((p) => p.name === "3-Point")?.lights ?? []
     return preset.map((l, i) => ({ ...l, id: Date.now() + i, visible: true }))
@@ -190,6 +194,12 @@ export default function GalleryPage() {
       orbitControlsRef.current.update()
     }
   }, [selectedModel, resetViewSettings])
+
+  useEffect(() => {
+    if (!modelRef.current) return
+    const box = new THREE.Box3().setFromObject(modelRef.current)
+    setGroundY(box.min.y - 0.001)
+  }, [selectedModel?.id, boundsKey])
 
   const updateQuery = (params: Record<string, string | null>) => {
     const q = new URLSearchParams(searchParams.toString())
@@ -507,6 +517,12 @@ export default function GalleryPage() {
           frameloop={isLightDragging ? "always" : "demand"}
         >
           <Suspense fallback={null}>
+            {groundEnabled && (
+              <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, groundY, 0]} receiveShadow>
+                <planeGeometry args={[200, 200]} />
+                <shadowMaterial transparent opacity={0.25} />
+              </mesh>
+            )}
             {lightsEnabled && lights.map((l) => <SpotLightInScene key={l.id} light={l} />)}
             <Bounds fit clip damping={6} margin={1.2} key={`${selectedModel.id}-${boundsKey}`}>
               <ModelViewer
@@ -543,7 +559,11 @@ export default function GalleryPage() {
         </div>
 
         <div className="absolute top-4 right-4 w-[360px] bg-black/50 backdrop-blur-sm border border-white/20 rounded-lg text-white z-10 flex flex-col max-h-[calc(100vh-2rem)]">
-          <div className="flex items-center justify-end p-4">
+          <div className="flex items-center justify-between p-4">
+            <div className="flex items-center gap-2">
+              <span className="text-xs">Ground</span>
+              <Switch checked={groundEnabled} onCheckedChange={setGroundEnabled} />
+            </div>
             <button onClick={() => setIsSettingsPanelOpen(!isSettingsPanelOpen)} className="p-1 -m-1">
               <ChevronDown className={`h-5 w-5 transition-transform ${isSettingsPanelOpen ? "rotate-180" : ""}`} />
             </button>
