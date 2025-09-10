@@ -6,7 +6,16 @@ import { FolderDescriptionDialog, ItemContextMenu, NewFolderDialog, RenameDialog
 import { CaptureController, ModelViewer, SpotLightInScene } from "@/components/gallery/viewer-components"
 import { Button } from "@/components/ui/button"
 import { Checkbox } from "@/components/ui/checkbox"
-import { DropdownMenu, DropdownMenuContent, DropdownMenuLabel, DropdownMenuRadioGroup, DropdownMenuRadioItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu"
+import {
+  DropdownMenu,
+  DropdownMenuCheckboxItem,
+  DropdownMenuContent,
+  DropdownMenuLabel,
+  DropdownMenuRadioGroup,
+  DropdownMenuRadioItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger
+} from "@/components/ui/dropdown-menu"
 import { Input } from "@/components/ui/input"
 import { Skeleton } from "@/components/ui/skeleton"
 import { Switch } from "@/components/ui/switch"
@@ -43,6 +52,11 @@ export default function GalleryPage() {
   const [selectedItems, setSelectedItems] = useState<Set<string>>(new Set())
   const [pill, setPill] = useState<Pill>("all")
   const lastSelectedItem = useRef<string | null>(null)
+
+  const [filterVisibility, setFilterVisibility] = useState<"all" | "public" | "private">("all")
+  const [filterFolderId, setFilterFolderId] = useState<string | null>(null)
+  const [filterDate, setFilterDate] = useState<"any" | "24h" | "7d" | "30d" | "365d">("any")
+  const [filterHasThumb, setFilterHasThumb] = useState<"any" | "yes" | "no">("any")
 
   const [sortBy, sortOrder] = sortOption.split("-")
   const galleryUrl = `/api/gallery?folderId=${currentFolderId || ""}&sortBy=${sortBy}&sortOrder=${sortOrder}`
@@ -92,9 +106,41 @@ export default function GalleryPage() {
     return map
   }, [allFolders])
 
+  const folderDescendants = useMemo(() => {
+    if (!filterFolderId) return null as Set<string> | null
+    const children = new Map<string, string[]>()
+      ; (allFolders ?? []).forEach((f) => {
+        const p = f.parent_id as string | null
+        if (!children.has(p || "")) children.set(p || "", [])
+        children.get(p || "")!.push(f.id)
+      })
+    const acc = new Set<string>([filterFolderId])
+    const queue = [filterFolderId]
+    while (queue.length) {
+      const cur = queue.shift()!
+      const kids = children.get(cur) || []
+      kids.forEach((k) => {
+        if (!acc.has(k)) {
+          acc.add(k)
+          queue.push(k)
+        }
+      })
+    }
+    return acc
+  }, [filterFolderId, allFolders])
+
   const filteredItems = useMemo(() => {
     const q = searchQuery.trim().toLowerCase()
+    const cutoff = (() => {
+      const now = Date.now()
+      if (filterDate === "24h") return now - 24 * 3600 * 1000
+      if (filterDate === "7d") return now - 7 * 24 * 3600 * 1000
+      if (filterDate === "30d") return now - 30 * 24 * 3600 * 1000
+      if (filterDate === "365d") return now - 365 * 24 * 3600 * 1000
+      return null
+    })()
     const matchesFolderChain = (folderId: string | null | undefined) => {
+      if (!q) return false
       let cur = folderId ? folderById.get(folderId) : null
       while (cur) {
         if ((cur.name || "").toLowerCase().includes(q) || (cur.description || "").toLowerCase().includes(q)) return true
@@ -105,6 +151,15 @@ export default function GalleryPage() {
     const base = gridModels.filter((m) => {
       if (pill === "public" && !m.is_public) return false
       if (pill === "drafts" && m.is_public) return false
+      if (filterVisibility === "public" && !m.is_public) return false
+      if (filterVisibility === "private" && m.is_public) return false
+      if (folderDescendants && !folderDescendants.has(m.folder_id || "")) return false
+      if (filterHasThumb === "yes" && (!m.thumbnail_url || m.thumbnail_url.includes("/placeholder.svg"))) return false
+      if (filterHasThumb === "no" && m.thumbnail_url && !m.thumbnail_url.includes("/placeholder.svg")) return false
+      if (cutoff) {
+        const ts = new Date((m as any).updated_at || m.created_at).getTime()
+        if (Number.isFinite(ts) && ts < cutoff) return false
+      }
       if (!q) return true
       const nameHit = m.name.toLowerCase().includes(q)
       const folderHit = matchesFolderChain(m.folder_id)
@@ -115,6 +170,16 @@ export default function GalleryPage() {
         const r = a.name.localeCompare(b.name)
         return sortOrder === "asc" ? r : -r
       }
+      if (sortBy === "updated_at") {
+        const ra = new Date((a as any).updated_at || a.created_at).getTime()
+        const rb = new Date((b as any).updated_at || b.created_at).getTime()
+        return sortOrder === "asc" ? ra - rb : rb - ra
+      }
+      if (sortBy === "visibility") {
+        const va = a.is_public ? 1 : 0
+        const vb = b.is_public ? 1 : 0
+        return sortOrder === "asc" ? va - vb : vb - va
+      }
       if (sortBy === "created_at") {
         const ra = new Date(a.created_at as any).getTime()
         const rb = new Date(b.created_at as any).getTime()
@@ -123,7 +188,7 @@ export default function GalleryPage() {
       return 0
     })
     return sorted
-  }, [gridModels, pill, searchQuery, folderById, sortBy, sortOrder])
+  }, [gridModels, pill, searchQuery, folderById, folderDescendants, filterVisibility, filterHasThumb, filterDate, sortBy, sortOrder])
 
   const [materialMode, setMaterialMode] = useState<"pbr" | "normal" | "white">("white")
   const [isSettingsPanelOpen, setIsSettingsPanelOpen] = useState(true)
@@ -659,6 +724,15 @@ export default function GalleryPage() {
     )
   }
 
+  const activeFilterCount = useMemo(() => {
+    let n = 0
+    if (filterVisibility !== "all") n++
+    if (filterFolderId) n++
+    if (filterDate !== "any") n++
+    if (filterHasThumb !== "any") n++
+    return n
+  }, [filterVisibility, filterFolderId, filterDate, filterHasThumb])
+
   return (
     <div className="min-h-screen bg-black text-white relative">
       <div className="flex items-center justify-between px-4 md:px-8 py-4">
@@ -678,6 +752,56 @@ export default function GalleryPage() {
         <div className="flex items-center gap-2">
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
+              <Button variant="outline" className="h-8 px-3 border-white/20 bg-transparent flex items-center gap-2">
+                <ListFilter className="h-4 w-4" />
+                Filters{activeFilterCount ? <span className="ml-1 rounded-full bg-white text-black text-xs px-2 py-0.5">{activeFilterCount}</span> : null}
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end" className="w-72">
+              <DropdownMenuLabel>Visibility</DropdownMenuLabel>
+              <DropdownMenuRadioGroup value={filterVisibility} onValueChange={(v: any) => setFilterVisibility(v)}>
+                <DropdownMenuRadioItem value="all">All</DropdownMenuRadioItem>
+                <DropdownMenuRadioItem value="public">Public</DropdownMenuRadioItem>
+                <DropdownMenuRadioItem value="private">Private</DropdownMenuRadioItem>
+              </DropdownMenuRadioGroup>
+              <DropdownMenuSeparator />
+              <DropdownMenuLabel>Folder</DropdownMenuLabel>
+              <DropdownMenuRadioGroup value={filterFolderId ?? "any"} onValueChange={(v: string) => setFilterFolderId(v === "any" ? null : v)}>
+                <DropdownMenuRadioItem value="any">All folders</DropdownMenuRadioItem>
+                {(allFolders ?? []).map((f) => (
+                  <DropdownMenuRadioItem key={f.id} value={f.id}>{f.name}</DropdownMenuRadioItem>
+                ))}
+              </DropdownMenuRadioGroup>
+              <DropdownMenuSeparator />
+              <DropdownMenuLabel>Date</DropdownMenuLabel>
+              <DropdownMenuRadioGroup value={filterDate} onValueChange={(v: any) => setFilterDate(v)}>
+                <DropdownMenuRadioItem value="any">Any time</DropdownMenuRadioItem>
+                <DropdownMenuRadioItem value="24h">Last 24 hours</DropdownMenuRadioItem>
+                <DropdownMenuRadioItem value="7d">Last 7 days</DropdownMenuRadioItem>
+                <DropdownMenuRadioItem value="30d">Last 30 days</DropdownMenuRadioItem>
+                <DropdownMenuRadioItem value="365d">Last year</DropdownMenuRadioItem>
+              </DropdownMenuRadioGroup>
+              <DropdownMenuSeparator />
+              <DropdownMenuLabel>Thumbnails</DropdownMenuLabel>
+              <DropdownMenuRadioGroup value={filterHasThumb} onValueChange={(v: any) => setFilterHasThumb(v)}>
+                <DropdownMenuRadioItem value="any">Any</DropdownMenuRadioItem>
+                <DropdownMenuRadioItem value="yes">Has thumbnail</DropdownMenuRadioItem>
+                <DropdownMenuRadioItem value="no">Missing thumbnail</DropdownMenuRadioItem>
+              </DropdownMenuRadioGroup>
+              <DropdownMenuSeparator />
+              <DropdownMenuCheckboxItem checked={false} onCheckedChange={() => {
+                setFilterVisibility("all")
+                setFilterFolderId(null)
+                setFilterDate("any")
+                setFilterHasThumb("any")
+              }}>
+                Clear filters
+              </DropdownMenuCheckboxItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
+
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
               <Button variant="outline" size="icon" className="h-8 w-8 border-white/20 bg-transparent">
                 <ListFilter className="h-4 w-4" />
               </Button>
@@ -685,12 +809,16 @@ export default function GalleryPage() {
             <DropdownMenuContent align="end">
               <DropdownMenuLabel>Sort by</DropdownMenuLabel>
               <DropdownMenuRadioGroup value={sortOption} onValueChange={setSortOption}>
-                <DropdownMenuRadioItem value="created_at-desc">Most Recent</DropdownMenuRadioItem>
-                <DropdownMenuRadioItem value="name-asc">Name (A-Z)</DropdownMenuRadioItem>
-                <DropdownMenuRadioItem value="name-desc">Name (Z-A)</DropdownMenuRadioItem>
+                <DropdownMenuRadioItem value="created_at-desc">Newest</DropdownMenuRadioItem>
+                <DropdownMenuRadioItem value="created_at-asc">Oldest</DropdownMenuRadioItem>
+                <DropdownMenuRadioItem value="updated_at-desc">Recently updated</DropdownMenuRadioItem>
+                <DropdownMenuRadioItem value="name-asc">Name (A–Z)</DropdownMenuRadioItem>
+                <DropdownMenuRadioItem value="name-desc">Name (Z–A)</DropdownMenuRadioItem>
+                <DropdownMenuRadioItem value="visibility-desc">Visibility</DropdownMenuRadioItem>
               </DropdownMenuRadioGroup>
             </DropdownMenuContent>
           </DropdownMenu>
+
           <Button variant="secondary" size="icon" className="h-8 w-8 rounded-full" onClick={() => document.querySelector<HTMLInputElement>('input[type="file"]')?.click()}>
             <Plus className="h-4 w-4" />
           </Button>

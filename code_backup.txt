@@ -5,21 +5,30 @@
 import { BulkActionBar } from "@/components/gallery/bulk-action-bar"
 import { SettingsPanel } from "@/components/gallery/settings-panel"
 import { FolderDescriptionDialog, ItemContextMenu, NewFolderDialog, RenameDialog } from "@/components/gallery/ui-components"
-import { CaptureController, Loader, ModelViewer, SpotLightInScene } from "@/components/gallery/viewer-components"
+import { CaptureController, ModelViewer, SpotLightInScene } from "@/components/gallery/viewer-components"
 import { Button } from "@/components/ui/button"
 import { Checkbox } from "@/components/ui/checkbox"
-import { DropdownMenu, DropdownMenuContent, DropdownMenuLabel, DropdownMenuRadioGroup, DropdownMenuRadioItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu"
+import {
+  DropdownMenu,
+  DropdownMenuCheckboxItem,
+  DropdownMenuContent,
+  DropdownMenuLabel,
+  DropdownMenuRadioGroup,
+  DropdownMenuRadioItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger
+} from "@/components/ui/dropdown-menu"
 import { Input } from "@/components/ui/input"
-import { Sidebar, SidebarContent, SidebarHeader, SidebarInset, SidebarMenu, SidebarMenuButton, SidebarMenuItem, SidebarProvider, SidebarTrigger } from "@/components/ui/sidebar"
 import { Skeleton } from "@/components/ui/skeleton"
+import { Switch } from "@/components/ui/switch"
 import { lightingPresets } from "@/lib/lighting-presets"
 import { cn } from "@/lib/utils"
-import type { Folder, GalleryContents, GalleryItem, Light, Model, ViewSettings } from "@/types"
+import type { Folder, GalleryItem, Light, Model, ViewSettings } from "@/types"
 import { Bounds, OrbitControls, useGLTF } from "@react-three/drei"
 import { Canvas } from "@react-three/fiber"
 import { Bloom, EffectComposer } from "@react-three/postprocessing"
 import { upload } from "@vercel/blob/client"
-import { ChevronDown, ChevronLeft, ChevronRight, Download, FolderIcon, FolderPlus, Globe, Grid, Info, ListFilter, LoaderIcon, Lock, Palette, Search, Upload } from "lucide-react"
+import { ChevronDown, ChevronLeft, Download, Globe, Info, ListFilter, Lock, Palette, Plus, Search, Upload } from "lucide-react"
 import { useRouter, useSearchParams } from "next/navigation"
 import type React from "react"
 import { Fragment, Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react"
@@ -29,6 +38,8 @@ import type { OrbitControls as OrbitControlsImpl } from "three-stdlib"
 
 useGLTF.setDecoderPath("https://www.gstatic.com/draco/v1/decoders/")
 const fetcher = (url: string) => fetch(url).then((res) => res.json())
+
+type Pill = "all" | "models" | "public" | "drafts"
 
 export default function GalleryPage() {
   const { mutate } = useSWRConfig()
@@ -41,11 +52,18 @@ export default function GalleryPage() {
   const [searchQuery, setSearchQuery] = useState("")
   const [sortOption, setSortOption] = useState("created_at-desc")
   const [selectedItems, setSelectedItems] = useState<Set<string>>(new Set())
+  const [pill, setPill] = useState<Pill>("all")
   const lastSelectedItem = useRef<string | null>(null)
+
+  const [filterVisibility, setFilterVisibility] = useState<"all" | "public" | "private">("all")
+  const [filterFolderId, setFilterFolderId] = useState<string | null>(null)
+  const [filterDate, setFilterDate] = useState<"any" | "24h" | "7d" | "30d" | "365d">("any")
+  const [filterHasThumb, setFilterHasThumb] = useState<"any" | "yes" | "no">("any")
 
   const [sortBy, sortOrder] = sortOption.split("-")
   const galleryUrl = `/api/gallery?folderId=${currentFolderId || ""}&sortBy=${sortBy}&sortOrder=${sortOrder}`
-  const { data: gallery, error, isLoading } = useSWR<GalleryContents>(galleryUrl, fetcher)
+  const { data: gallery, error, isLoading } = useSWR<{ folders: Folder[]; models: Model[]; currentFolder: Folder | null }>(galleryUrl, fetcher)
+
   const { data: allFolders } = useSWR<Folder[]>("/api/folders/all", fetcher)
   const { data: selectedModel, mutate: mutateSelectedModel } = useSWR<Model>(modelId ? `/api/models/${modelId}` : null, fetcher)
   const { data: breadcrumbData } = useSWR<{ id: string; name: string }[]>(currentFolderId ? `/api/folders/${currentFolderId}/breadcrumbs` : null, fetcher)
@@ -54,25 +72,125 @@ export default function GalleryPage() {
     setBreadcrumbs(currentFolderId === null ? [{ id: null, name: "Assets" }] : [{ id: null, name: "Assets" }, ...(breadcrumbData || [])])
   }, [currentFolderId, breadcrumbData])
 
-  const galleryItems: GalleryItem[] = useMemo(
-    () => [
-      ...(gallery?.folders.map((f) => ({ ...f, type: "folder" as const })) ?? []),
-      ...(gallery?.models.map((m) => ({ ...m, type: "model" as const })) ?? []),
-    ],
-    [gallery],
-  )
+  const [refreshKey, setRefreshKey] = useState(0)
+  const [allModelsCombined, setAllModelsCombined] = useState<Model[] | null>(null)
+
+  useEffect(() => {
+    let cancelled = false
+    const load = async () => {
+      const ids = [null, ...((allFolders ?? []).map((f) => f.id))]
+      const results = await Promise.all(
+        ids.map((fid) =>
+          fetch(`/api/gallery?folderId=${fid ?? ""}&sortBy=created_at&sortOrder=desc`)
+            .then((r) => (r.ok ? r.json() : null))
+            .catch(() => null),
+        ),
+      )
+      const models: Model[] = results.flatMap((r) => (r && Array.isArray(r.models) ? (r.models as Model[]) : []))
+      const uniq = new Map<string, Model>()
+      models.forEach((m) => uniq.set(m.id, m))
+      if (!cancelled) setAllModelsCombined(Array.from(uniq.values()))
+    }
+    load()
+    return () => {
+      cancelled = true
+    }
+  }, [allFolders, refreshKey])
+
+  const gridModels: (Model & { type: "model" })[] = useMemo(() => {
+    const list = (allModelsCombined ?? gallery?.models ?? []) as Model[]
+    return list.map((m) => ({ ...m, type: "model" as const }))
+  }, [allModelsCombined, gallery?.models])
+
+  const folderById = useMemo(() => {
+    const map = new Map<string, Folder>()
+      ; (allFolders ?? []).forEach((f) => map.set(f.id, f))
+    return map
+  }, [allFolders])
+
+  const folderDescendants = useMemo(() => {
+    if (!filterFolderId) return null as Set<string> | null
+    const children = new Map<string, string[]>()
+      ; (allFolders ?? []).forEach((f) => {
+        const p = f.parent_id as string | null
+        if (!children.has(p || "")) children.set(p || "", [])
+        children.get(p || "")!.push(f.id)
+      })
+    const acc = new Set<string>([filterFolderId])
+    const queue = [filterFolderId]
+    while (queue.length) {
+      const cur = queue.shift()!
+      const kids = children.get(cur) || []
+      kids.forEach((k) => {
+        if (!acc.has(k)) {
+          acc.add(k)
+          queue.push(k)
+        }
+      })
+    }
+    return acc
+  }, [filterFolderId, allFolders])
 
   const filteredItems = useMemo(() => {
-    const q = searchQuery.toLowerCase()
-    return galleryItems.filter((item) => {
-      const nameMatch = item.name.toLowerCase().includes(q)
-      if (searchQuery && item.type === "model") {
-        const folderDescriptionMatch = gallery?.currentFolder?.description?.toLowerCase().includes(q)
-        return nameMatch || folderDescriptionMatch
+    const q = searchQuery.trim().toLowerCase()
+    const cutoff = (() => {
+      const now = Date.now()
+      if (filterDate === "24h") return now - 24 * 3600 * 1000
+      if (filterDate === "7d") return now - 7 * 24 * 3600 * 1000
+      if (filterDate === "30d") return now - 30 * 24 * 3600 * 1000
+      if (filterDate === "365d") return now - 365 * 24 * 3600 * 1000
+      return null
+    })()
+    const matchesFolderChain = (folderId: string | null | undefined) => {
+      if (!q) return false
+      let cur = folderId ? folderById.get(folderId) : null
+      while (cur) {
+        if ((cur.name || "").toLowerCase().includes(q) || (cur.description || "").toLowerCase().includes(q)) return true
+        cur = cur.parent_id ? folderById.get(cur.parent_id as any) : null
       }
-      return nameMatch
+      return false
+    }
+    const base = gridModels.filter((m) => {
+      if (pill === "public" && !m.is_public) return false
+      if (pill === "drafts" && m.is_public) return false
+      if (filterVisibility === "public" && !m.is_public) return false
+      if (filterVisibility === "private" && m.is_public) return false
+      if (folderDescendants && !folderDescendants.has(m.folder_id || "")) return false
+      if (filterHasThumb === "yes" && (!m.thumbnail_url || m.thumbnail_url.includes("/placeholder.svg"))) return false
+      if (filterHasThumb === "no" && m.thumbnail_url && !m.thumbnail_url.includes("/placeholder.svg")) return false
+      if (cutoff) {
+        const ts = new Date((m as any).updated_at || m.created_at).getTime()
+        if (Number.isFinite(ts) && ts < cutoff) return false
+      }
+      if (!q) return true
+      const nameHit = m.name.toLowerCase().includes(q)
+      const folderHit = matchesFolderChain(m.folder_id)
+      return nameHit || folderHit
     })
-  }, [galleryItems, searchQuery, gallery?.currentFolder?.description])
+    const sorted = [...base].sort((a, b) => {
+      if (sortBy === "name") {
+        const r = a.name.localeCompare(b.name)
+        return sortOrder === "asc" ? r : -r
+      }
+      if (sortBy === "updated_at") {
+        const ra = new Date((a as any).updated_at || a.created_at).getTime()
+        const rb = new Date((b as any).updated_at || b.created_at).getTime()
+        return sortOrder === "asc" ? ra - rb : rb - ra
+      }
+      if (sortBy === "visibility") {
+        const va = a.is_public ? 1 : 0
+        const vb = b.is_public ? 1 : 0
+        return sortOrder === "asc" ? va - vb : vb - va
+      }
+      if (sortBy === "created_at") {
+        const ra = new Date(a.created_at as any).getTime()
+        const rb = new Date(b.created_at as any).getTime()
+        return sortOrder === "asc" ? ra - rb : rb - ra
+      }
+      return 0
+    })
+    return sorted
+  }, [gridModels, pill, searchQuery, folderById, folderDescendants, filterVisibility, filterHasThumb, filterDate, sortBy, sortOrder])
 
   const [materialMode, setMaterialMode] = useState<"pbr" | "normal" | "white">("white")
   const [isSettingsPanelOpen, setIsSettingsPanelOpen] = useState(true)
@@ -85,7 +203,15 @@ export default function GalleryPage() {
   const [bgImage, setBgImage] = useState<string | null>(null)
   const [lights, setLights] = useState<Light[]>([])
   const [selectedLightId, setSelectedLightId] = useState<number | null>(null)
-  const [fieldOfView, setFieldOfView] = useState(50)
+
+  const [matOverrideEnabled, setMatOverrideEnabled] = useState(false)
+  const [matBaseColor, setMatBaseColor] = useState<string>("#e5e5e5")
+  const [matMetalness, setMatMetalness] = useState<number>(0)
+  const [matRoughness, setMatRoughness] = useState<number>(0.6)
+  const [matClearcoat, setMatClearcoat] = useState<number>(0)
+  const [matClearcoatRough, setMatClearcoatRough] = useState<number>(0.6)
+  const [matIOR, setMatIOR] = useState<number>(1.5)
+  const [matTransmission, setMatTransmission] = useState<number>(0)
 
   const [isOrbitControlsEnabled, setIsOrbitControlsEnabled] = useState(true)
   const modelRef = useRef<THREE.Group>(null)
@@ -94,27 +220,37 @@ export default function GalleryPage() {
   const [boundsKey, setBoundsKey] = useState(0)
   const [isLightDragging, setIsLightDragging] = useState(false)
 
-  const defaultLights: Light[] = useMemo(
-    () => [
-      { id: Date.now(), visible: true, position: [-2, 3, 2], targetPosition: [0, 0, 0], intensity: 3, kelvin: 5500, decay: 1, angle: 45, penumbra: 0.5 },
-      { id: Date.now() + 1, visible: true, position: [2, 2, -1], targetPosition: [0, 0, 0], intensity: 2, kelvin: 4000, decay: 1, angle: 60, penumbra: 0.3 },
-    ],
-    [],
-  )
+  const [groundEnabled, setGroundEnabled] = useState(false)
+  const [groundY, setGroundY] = useState(0)
 
-  const resetViewSettings = useCallback((s: ViewSettings | null | undefined) => {
-    setLights((s?.lights ?? defaultLights).map((l, i) => ({ ...l, id: Date.now() + i, visible: true })))
-    setLightsEnabled(s?.lightsEnabled ?? true)
-    setEnvironmentEnabled(s?.environmentEnabled ?? false)
-    setBloomEnabled(s?.bloomEnabled ?? false)
-    setBgType(s?.bgType ?? "color")
-    setBgColor1(s?.bgColor1 ?? "#000000")
-    setBgColor2(s?.bgColor2 ?? "#1a1a1a")
-    setBgImage(s?.bgImage ?? null)
-    setFieldOfView(s?.fieldOfView ?? 50)
-    setMaterialMode(s?.materialMode ?? "white")
-    setSelectedLightId(null)
-  }, [defaultLights])
+  const defaultLights: Light[] = useMemo(() => {
+    const preset = lightingPresets.find((p) => p.name === "3-Point")?.lights ?? []
+    return preset.map((l, i) => ({ ...l, id: Date.now() + i, visible: true }))
+  }, [])
+
+  const resetViewSettings = useCallback(
+    (s: ViewSettings | null | undefined) => {
+      setLights((s?.lights ?? defaultLights).map((l, i) => ({ ...l, id: Date.now() + i, visible: true })))
+      setLightsEnabled(s?.lightsEnabled ?? true)
+      setEnvironmentEnabled(s?.environmentEnabled ?? false)
+      setBloomEnabled(s?.bloomEnabled ?? false)
+      setBgType(s?.bgType ?? "color")
+      setBgColor1(s?.bgColor1 ?? "#000000")
+      setBgColor2(s?.bgColor2 ?? "#1a1a1a")
+      setBgImage(s?.bgImage ?? null)
+      setMaterialMode(s?.materialMode ?? "white")
+      setMatOverrideEnabled(!!s?.materialOverride?.enabled)
+      setMatBaseColor(s?.materialOverride?.color ?? "#e5e5e5")
+      setMatMetalness(s?.materialOverride?.metalness ?? 0)
+      setMatRoughness(s?.materialOverride?.roughness ?? 0.6)
+      setMatClearcoat(s?.materialOverride?.clearcoat ?? 0)
+      setMatClearcoatRough(s?.materialOverride?.clearcoatRoughness ?? 0.6)
+      setMatIOR(s?.materialOverride?.ior ?? 1.5)
+      setMatTransmission(s?.materialOverride?.transmission ?? 0)
+      setSelectedLightId(null)
+    },
+    [defaultLights],
+  )
 
   useEffect(() => {
     if (!selectedModel) return
@@ -126,6 +262,12 @@ export default function GalleryPage() {
     }
   }, [selectedModel, resetViewSettings])
 
+  useEffect(() => {
+    if (!modelRef.current) return
+    const box = new THREE.Box3().setFromObject(modelRef.current)
+    setGroundY(box.min.y - 0.001)
+  }, [selectedModel?.id, boundsKey])
+
   const updateQuery = (params: Record<string, string | null>) => {
     const q = new URLSearchParams(searchParams.toString())
     Object.entries(params).forEach(([k, v]) => (v === null ? q.delete(k) : q.set(k, v)))
@@ -136,18 +278,32 @@ export default function GalleryPage() {
   const handleModelUpdate = useCallback(
     async (id: string, updates: Partial<Omit<Model, "id" | "created_at">>) => {
       await fetch(`/api/models/${id}`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify(updates) })
-      mutateSelectedModel(); mutate(galleryUrl); mutateModel(`/api/models/${id}`)
+      mutateSelectedModel()
+      mutate(galleryUrl)
+      mutateModel(`/api/models/${id}`)
+      setRefreshKey((k) => k + 1)
     },
     [mutateSelectedModel, mutate, mutateModel, galleryUrl],
   )
 
-  const handleThumbnailUpload = useCallback(async (file: File) => {
-    if (!selectedModel) return
-    const ext = file.name.split(".").pop() || "png"
-    const pathname = `thumbnails/${selectedModel.id}-${Date.now()}.${ext}`
-    const newBlob = await upload(pathname, file, { access: "public", handleUploadUrl: "/api/upload", clientPayload: JSON.stringify({ isThumbnail: true }) })
-    await handleModelUpdate(selectedModel.id, { thumbnail_url: `${newBlob.url}?v=${Date.now()}` })
-  }, [selectedModel, handleModelUpdate])
+  const handleThumbnailUpload = useCallback(
+    async (file: File) => {
+      if (!selectedModel) return
+      const fromName = file.name?.split(".").pop()?.toLowerCase()
+      const fromType = (file.type || "").split("/")[1]
+      const ext = (fromName || fromType || "png").replace(/[^a-z0-9]/gi, "")
+      const pathname = `thumbnails/${selectedModel.id}-${Date.now()}.${ext || "png"}`
+      try {
+        const newBlob = await upload(pathname, file, { access: "public", handleUploadUrl: "/api/upload" })
+        const url = (newBlob as any).url || (newBlob as any).downloadUrl
+        await handleModelUpdate(selectedModel.id, { thumbnail_url: `${url}?v=${Date.now()}` })
+      } catch {
+        const fallback = URL.createObjectURL(file)
+        await handleModelUpdate(selectedModel.id, { thumbnail_url: fallback })
+      }
+    },
+    [selectedModel, handleModelUpdate],
+  )
 
   const handleCaptureThumbnail = useCallback(async () => {
     if (!captureControllerRef.current) return
@@ -163,12 +319,10 @@ export default function GalleryPage() {
     }
   }, [selectedModel, handleCaptureThumbnail])
 
-  const handleNavigateToFolder = (folderId: string) => { updateQuery({ folderId, modelId: null }); setSelectedItems(new Set()) }
-  const handleBreadcrumbClick = (folderId: string | null) => { updateQuery({ folderId, modelId: null }); setSelectedItems(new Set()) }
   const handleModelClick = (m: Model) => updateQuery({ modelId: m.id })
   const handleCloseViewer = () => updateQuery({ modelId: null })
 
-  const handleItemClick = (e: React.MouseEvent, item: GalleryItem) => {
+  const handleItemClick = (e: React.MouseEvent, item: Model & { type: "model" }) => {
     e.stopPropagation()
     const next = new Set(selectedItems)
     if (e.shiftKey && lastSelectedItem.current) {
@@ -177,62 +331,70 @@ export default function GalleryPage() {
       const [s, t] = [li, ci].sort((a, b) => a - b)
       for (let i = s; i <= t; i++) next.add(filteredItems[i].id)
     } else if (e.metaKey || e.ctrlKey) next.has(item.id) ? next.delete(item.id) : next.add(item.id)
-    else { next.size === 1 && next.has(item.id) ? next.clear() : next.clear(); next.add(item.id) }
-    setSelectedItems(next); lastSelectedItem.current = item.id
+    else {
+      next.size === 1 && next.has(item.id) ? next.clear() : next.clear()
+      next.add(item.id)
+    }
+    setSelectedItems(next)
+    lastSelectedItem.current = item.id
   }
 
   const handleUploadAction = async (files: FileList | null) => {
     if (!files?.length) return
-    await Promise.all(Array.from(files).map(async (file) => {
-      if (!file.name.endsWith(".glb")) return
-      try {
-        const blob = await upload(file.name.replace(/\s+/g, "_"), file, { access: "public", handleUploadUrl: "/api/upload" })
-        await fetch("/api/models", {
-          method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({
-            name: file.name.replace(/\.glb$/, ""), model_url: blob.url,
-            thumbnail_url: `/placeholder.svg?width=400&height=400&query=${encodeURIComponent(file.name.replace(/\.glb$/, ""))}`,
-            folder_id: currentFolderId,
+    await Promise.all(
+      Array.from(files).map(async (file) => {
+        if (!file.name.endsWith(".glb")) return
+        try {
+          const blob = await upload(file.name.replace(/\s+/g, "_"), file, { access: "public", handleUploadUrl: "/api/upload" })
+          const url = (blob as any).url || (blob as any).downloadUrl
+          await fetch("/api/models", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              name: file.name.replace(/\.glb$/, ""),
+              model_url: url,
+              thumbnail_url: `/placeholder.svg?width=400&height=400&query=${encodeURIComponent(file.name.replace(/\.glb$/, ""))}`,
+              folder_id: currentFolderId,
+            }),
           })
-        })
-      } catch { }
-    }))
+        } catch { }
+      }),
+    )
     mutate(galleryUrl)
+    setRefreshKey((k) => k + 1)
   }
 
   const handleRename = async (newName: string) => {
-    const item = renameItem; if (!item) return
-    const url = item.type === "folder" ? `/api/folders/${item.id}` : `/api/models/${item.id}`
+    const item = renameItem
+    if (!item) return
+    const url = `/api/models/${item.id}`
     await fetch(url, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ name: newName }) })
-    mutate(galleryUrl); if (item.type === "model") mutate(`/api/models/${item.id}`); setRenameItem(null)
+    mutate(galleryUrl)
+    mutate(`/api/models/${item.id}`)
+    setRenameItem(null)
+    setRefreshKey((k) => k + 1)
   }
 
-  const bulkAct = async (ids: string[], fn: (id: string, type: "folder" | "model") => Promise<void>) => {
-    await Promise.all(ids.map(async (id) => {
-      const it = galleryItems.find((i) => i.id === id); if (!it) return; await fn(id, it.type)
-    })); mutate(galleryUrl)
+  const bulkAct = async (ids: string[], fn: (id: string) => Promise<void>) => {
+    await Promise.all(ids.map(async (id) => fn(id)))
+    mutate(galleryUrl)
+    setRefreshKey((k) => k + 1)
   }
 
   const handleBulkDelete = async () => {
-    await bulkAct(Array.from(selectedItems), (id, type) => fetch(type === "folder" ? `/api/folders/${id}` : `/api/models/${id}`, { method: "DELETE" }).then(() => { }))
+    await bulkAct(Array.from(selectedItems), (id) => fetch(`/api/models/${id}`, { method: "DELETE" }).then(() => { }))
     if (Array.from(selectedItems).includes(modelId || "")) handleCloseViewer()
     setSelectedItems(new Set())
   }
 
-  const handleBulkMove = async (targetFolderId: string | null) => {
-    await bulkAct(Array.from(selectedItems), (id, type) =>
-      fetch(type === "folder" ? `/api/folders/${id}` : `/api/models/${id}`, {
-        method: "PATCH", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(type === "folder" ? { parent_id: targetFolderId } : { folder_id: targetFolderId }),
-      }).then(() => { }),
-    )
-    if (Array.from(selectedItems).includes(modelId || "") && targetFolderId !== currentFolderId) handleCloseViewer()
-    setSelectedItems(new Set())
-  }
+  const handleBulkMove = async (_targetFolderId: string | null) => { }
 
   const handleBulkSetPublic = async (isPublic: boolean) => {
-    await bulkAct(Array.from(selectedItems), (id, type) =>
-      fetch(type === "folder" ? `/api/folders/${id}` : `/api/models/${id}`, {
-        method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ is_public: isPublic }),
+    await bulkAct(Array.from(selectedItems), (id) =>
+      fetch(`/api/models/${id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ is_public: isPublic }),
       }).then(() => { }),
     )
     if (Array.from(selectedItems).includes(modelId || "")) mutateSelectedModel()
@@ -243,17 +405,35 @@ export default function GalleryPage() {
     if (!selectedModel || !orbitControlsRef.current) return
     const settings: ViewSettings = {
       lights: lights.map(({ id, visible, ...rest }) => rest),
-      lightsEnabled, environmentEnabled, bloomEnabled, ssaoEnabled: false,
-      bgType, bgColor1, bgColor2, bgImage, fieldOfView, materialMode,
+      lightsEnabled,
+      environmentEnabled,
+      bloomEnabled,
+      ssaoEnabled: false,
+      bgType,
+      bgColor1,
+      bgColor2,
+      bgImage,
       cameraPosition: orbitControlsRef.current.object.position.toArray() as [number, number, number],
       cameraTarget: orbitControlsRef.current.target.toArray() as [number, number, number],
+      materialMode,
+      materialOverride: {
+        enabled: matOverrideEnabled,
+        color: matBaseColor,
+        metalness: matMetalness,
+        roughness: matRoughness,
+        clearcoat: matClearcoat,
+        clearcoatRoughness: matClearcoatRough,
+        ior: matIOR,
+        transmission: matTransmission,
+      },
     }
     await handleModelUpdate(selectedModel.id, { view_settings: settings })
   }
 
   const handleDeleteViewSettings = async () => {
     if (!selectedModel) return
-    await handleModelUpdate(selectedModel.id, { view_settings: null }); resetViewSettings(null)
+    await handleModelUpdate(selectedModel.id, { view_settings: null })
+    resetViewSettings(null)
   }
 
   const handleDeleteThumbnail = async () => {
@@ -262,36 +442,97 @@ export default function GalleryPage() {
     await handleModelUpdate(selectedModel.id, { thumbnail_url: placeholder })
   }
 
-  const randomizeAllPartial = () => ({ intensity: 5 + Math.random() * 20, kelvin: 2500 + Math.random() * 7500, angle: 20 + Math.random() * 40, penumbra: Math.random() * 0.8 })
+  const randomizeAllPartial = () => ({
+    intensity: 5 + Math.random() * 20,
+    kelvin: 2500 + Math.random() * 7500,
+    angle: 20 + Math.random() * 40,
+    penumbra: Math.random() * 0.8,
+  })
   const handleLightChange = (id: number, v: Partial<Omit<Light, "id">>) => setLights((ls) => ls.map((l) => (l.id === id ? { ...l, ...v } : l)))
-  const addLight = () => { if (lights.length >= 5) return; const nl: Light = { id: Date.now(), visible: true, position: [-2, 3, 2], targetPosition: [0, 0, 0], intensity: 3, kelvin: 5500, decay: 1, angle: 45, penumbra: 0.5 }; setLights((ls) => [...ls, nl]); setSelectedLightId(nl.id) }
-  const removeLight = (id: number) => { if (lights.length <= 1) return; setLights((ls) => ls.filter((l) => l.id !== id)); if (selectedLightId === id) setSelectedLightId(lights.find((l) => l.id !== id)?.id ?? null) }
-  const toggleLightVisibility = (id: number) => setLights((ls) => ls.map((l) => (l.id === id ? { ...l, visible: !l.visible } : l)))
-  const cloneLight = (id: number) => { if (lights.length >= 5) return; const src = lights.find((l) => l.id === id); if (!src) return; const nl = { ...src, id: Date.now(), position: [src.position[0] + 1, src.position[1], src.position[2]] as [number, number, number] }; setLights((ls) => [...ls, nl]); setSelectedLightId(nl.id) }
-  const focusLightOnModel = (id: number) => { if (!modelRef.current) return; const box = new THREE.Box3().setFromObject(modelRef.current), c = new THREE.Vector3(); box.getCenter(c); handleLightChange(id, { targetPosition: [c.x, c.y, c.z] }) }
-  const applyPreset = (name: string) => { const p = lightingPresets.find((p) => p.name === name); if (!p) return; setLights(p.lights.map((l, i) => ({ ...l, id: Date.now() + i, visible: true }))); setSelectedLightId(null) }
-
-  const onKey = useCallback((e: KeyboardEvent) => {
-    if (!modelId || document.activeElement instanceof HTMLInputElement || document.activeElement instanceof HTMLTextAreaElement) return
-    const k = e.key.toLowerCase()
-    if (k === "1") setMaterialMode("white")
-    if (k === "2") setMaterialMode("pbr")
-    if (k === "3") setMaterialMode("normal")
-    if (k === "r") { e.preventDefault(); selectedLightId === null ? setLights((ls) => ls.map((l) => ({ ...l, ...randomizeAllPartial() }))) : handleLightChange(selectedLightId, randomizeAllPartial()) }
-    if (k === "arrowright" || k === "arrowleft") {
-      const ms = gallery?.models ?? []; if (!ms.length) return
-      const i = ms.findIndex((m) => m.id === modelId); if (i === -1) return
-      const ni = k === "arrowright" ? (i + 1) % ms.length : (i - 1 + ms.length) % ms.length
-      updateQuery({ modelId: ms[ni].id })
+  const addLight = () => {
+    if (lights.length >= 5) return
+    const nl: Light = {
+      id: Date.now(),
+      visible: true,
+      position: [-2, 3, 2],
+      targetPosition: [0, 0, 0],
+      intensity: 3,
+      kelvin: 5500,
+      decay: 1,
+      angle: 45,
+      penumbra: 0.5,
     }
-  }, [gallery?.models, modelId, selectedLightId])
-  useEffect(() => { window.addEventListener("keydown", onKey); return () => window.removeEventListener("keydown", onKey) }, [onKey])
+    setLights((ls) => [...ls, nl])
+    setSelectedLightId(nl.id)
+  }
+  const removeLight = (id: number) => {
+    if (lights.length <= 1) return
+    setLights((ls) => ls.filter((l) => l.id !== id))
+    if (selectedLightId === id) setSelectedLightId(lights.find((l) => l.id !== id)?.id ?? null)
+  }
+  const toggleLightVisibility = (id: number) => setLights((ls) => ls.map((l) => (l.id === id ? { ...l, visible: !l.visible } : l)))
+  const cloneLight = (id: number) => {
+    if (lights.length >= 5) return
+    const src = lights.find((l) => l.id === id)
+    if (!src) return
+    const nl = { ...src, id: Date.now(), position: [src.position[0] + 1, src.position[1], src.position[2]] as [number, number, number] }
+    setLights((ls) => [...ls, nl])
+    setSelectedLightId(nl.id)
+  }
+  const focusLightOnModel = (id: number) => {
+    if (!modelRef.current) return
+    const box = new THREE.Box3().setFromObject(modelRef.current),
+      c = new THREE.Vector3()
+    box.getCenter(c)
+    handleLightChange(id, { targetPosition: [c.x, c.y, c.z] })
+  }
+  const applyPreset = (name: string) => {
+    const p = lightingPresets.find((p) => p.name === name)
+    if (!p) return
+    setLights(p.lights.map((l, i) => ({ ...l, id: Date.now() + i, visible: true })))
+    setSelectedLightId(null)
+  }
 
-  const onPointerDown = (e: React.PointerEvent<HTMLDivElement>) => { if (e.shiftKey && selectedLightId !== null) { e.stopPropagation(); setIsLightDragging(true); setIsOrbitControlsEnabled(false); (e.target as HTMLElement).style.cursor = "grabbing" } }
+  const onKey = useCallback(
+    (e: KeyboardEvent) => {
+      if (!modelId || document.activeElement instanceof HTMLInputElement || document.activeElement instanceof HTMLTextAreaElement) return
+      const k = e.key.toLowerCase()
+      if (k === "1") setMaterialMode("white")
+      if (k === "2") setMaterialMode("pbr")
+      if (k === "3") setMaterialMode("normal")
+      if (k === "r") {
+        e.preventDefault()
+        selectedLightId === null ? setLights((ls) => ls.map((l) => ({ ...l, ...randomizeAllPartial() }))) : handleLightChange(selectedLightId, randomizeAllPartial())
+      }
+      if (k === "arrowright" || k === "arrowleft") {
+        const ms = gridModels
+        if (!ms.length) return
+        const i = ms.findIndex((m) => m.id === modelId)
+        if (i === -1) return
+        const ni = k === "arrowright" ? (i + 1) % ms.length : (i - 1 + ms.length) % ms.length
+        updateQuery({ modelId: ms[ni].id })
+      }
+    },
+    [gridModels, modelId, selectedLightId],
+  )
+  useEffect(() => {
+    window.addEventListener("keydown", onKey)
+    return () => window.removeEventListener("keydown", onKey)
+  }, [onKey])
+
+  const onPointerDown = (e: React.PointerEvent<HTMLDivElement>) => {
+    if (e.shiftKey && selectedLightId !== null) {
+      e.stopPropagation()
+      setIsLightDragging(true)
+      setIsOrbitControlsEnabled(false)
+        ; (e.target as HTMLElement).style.cursor = "grabbing"
+    }
+  }
   const onPointerMove = (e: React.PointerEvent<HTMLDivElement>) => {
     if (!isLightDragging || selectedLightId === null) return
     e.stopPropagation()
-    const light = lights.find((l) => l.id === selectedLightId); if (!light || !orbitControlsRef.current) return
+    const light = lights.find((l) => l.id === selectedLightId)
+    if (!light || !orbitControlsRef.current) return
     const targetPos = new THREE.Vector3().fromArray(light.targetPosition)
     const vec = new THREE.Vector3().fromArray(light.position).sub(targetPos)
     const cam = orbitControlsRef.current.object
@@ -301,7 +542,12 @@ export default function GalleryPage() {
     const pos = vec.add(targetPos)
     handleLightChange(selectedLightId, { position: pos.toArray() as [number, number, number] })
   }
-  const onPointerUp = () => { if (!isLightDragging) return; setIsLightDragging(false); setIsOrbitControlsEnabled(true); document.body.style.cursor = "auto" }
+  const onPointerUp = () => {
+    if (!isLightDragging) return
+    setIsLightDragging(false)
+    setIsOrbitControlsEnabled(true)
+    document.body.style.cursor = "auto"
+  }
 
   const bgStyle: React.CSSProperties = useMemo(() => {
     if (!environmentEnabled) return { backgroundColor: "#000000" }
@@ -311,50 +557,24 @@ export default function GalleryPage() {
   }, [environmentEnabled, bgType, bgColor1, bgColor2, bgImage])
 
   const [isNewFolderDialogOpen, setIsNewFolderDialogOpen] = useState(false)
-  const [renameItem, setRenameItem] = useState<GalleryItem | null>(null)
+  const [renameItem, setRenameItem] = useState<Model | null>(null)
   const [editingFolder, setEditingFolder] = useState<Folder | null>(null)
 
-  const handleUnifyAndSave = useCallback(async () => {
-    if (!modelRef.current || !selectedModel) return
-    const scene = modelRef.current
-    const box = new THREE.Box3().setFromObject(scene)
-    const size = box.getSize(new THREE.Vector3())
-    const center = box.getCenter(new THREE.Vector3())
-    if (size.y === 0) return
-    const s = 100 / size.y
-    scene.position.set(-center.x * s, -box.min.y * s, -center.z * s)
-    scene.scale.set(s, s, s)
-    setBoundsKey((p) => p + 1)
-
-    const exportRoot = scene.clone(true)
-    const { GLTFExporter } = await import("three-stdlib")
-    const exporter = new GLTFExporter()
-    const arrayBuffer: ArrayBuffer = await new Promise((resolve, reject) => {
-      exporter.parse(exportRoot, (res) => resolve(res as ArrayBuffer), (err) => reject(err), { binary: true })
-    })
-    const file = new File([arrayBuffer], `${selectedModel.name.replace(/\s+/g, "_")}-unified.glb`, { type: "model/gltf-binary" })
-    const remote = await upload(`models/${selectedModel.id}-unified-${Date.now()}.glb`, file, { access: "public", handleUploadUrl: "/api/upload" })
-    await handleModelUpdate(selectedModel.id, { model_url: `${remote.url}?v=${Date.now()}` })
-    await mutateSelectedModel()
-  }, [modelRef.current, selectedModel])
-
   if (modelId) {
-    if (!selectedModel) return <div className="w-full h-screen flex items-center justify-center bg-black"><LoaderIcon className="w-12 h-12 animate-spin text-white" /></div>
+    if (!selectedModel) return <div className="w-full h-screen" />
     return (
       <div className="w-full h-screen relative" style={bgStyle}>
         <Canvas
           shadows
-          gl={{ preserveDrawingBuffer: true, antialias: true }}
-          camera={{ fov: fieldOfView }}
+          gl={{ preserveDrawingBuffer: true, antialias: true, alpha: true }}
           onCreated={({ gl }) => {
-            gl.setClearAlpha(1)
+            gl.setClearAlpha(0)
             gl.outputColorSpace = THREE.SRGBColorSpace
             gl.toneMapping = THREE.ACESFilmicToneMapping
             gl.toneMappingExposure = 1
             gl.shadowMap.enabled = true
             gl.shadowMap.type = THREE.PCFSoftShadowMap
-            // @ts-ignore
-            gl.physicallyCorrectLights = true
+              ; (gl as any).physicallyCorrectLights = true
           }}
           onPointerMissed={(e) => e.button === 0 && setSelectedLightId(null)}
           onPointerDown={onPointerDown}
@@ -363,10 +583,30 @@ export default function GalleryPage() {
           onPointerLeave={onPointerUp}
           frameloop={isLightDragging ? "always" : "demand"}
         >
-          <Suspense fallback={<Loader />}>
+          <Suspense fallback={null}>
+            {groundEnabled && (
+              <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, groundY, 0]} receiveShadow>
+                <planeGeometry args={[200, 200]} />
+                <shadowMaterial transparent opacity={0.25} />
+              </mesh>
+            )}
             {lightsEnabled && lights.map((l) => <SpotLightInScene key={l.id} light={l} />)}
             <Bounds fit clip damping={6} margin={1.2} key={`${selectedModel.id}-${boundsKey}`}>
-              <ModelViewer ref={modelRef} modelUrl={selectedModel.model_url} materialMode={materialMode} />
+              <ModelViewer
+                ref={modelRef}
+                modelUrl={selectedModel.model_url}
+                materialMode={materialMode}
+                materialOverride={{
+                  enabled: matOverrideEnabled,
+                  color: matBaseColor,
+                  metalness: matMetalness,
+                  roughness: matRoughness,
+                  clearcoat: matClearcoat,
+                  clearcoatRoughness: matClearcoatRough,
+                  ior: matIOR,
+                  transmission: matTransmission,
+                }}
+              />
             </Bounds>
             {bloomEnabled && (
               <EffectComposer disableNormalPass>
@@ -386,12 +626,23 @@ export default function GalleryPage() {
         </div>
 
         <div className="absolute top-4 right-4 w-[360px] bg-black/50 backdrop-blur-sm border border-white/20 rounded-lg text-white z-10 flex flex-col max-h-[calc(100vh-2rem)]">
-          <div className="flex items-center justify-end p-4"><button onClick={() => setIsSettingsPanelOpen(!isSettingsPanelOpen)} className="p-1 -m-1"><ChevronDown className={`h-5 w-5 transition-transform ${isSettingsPanelOpen ? "rotate-180" : ""}`} /></button></div>
+          <div className="flex items-center justify-between p-4">
+            <div className="flex items-center gap-2">
+              <span className="text-xs">Ground</span>
+              <Switch checked={groundEnabled} onCheckedChange={setGroundEnabled} />
+            </div>
+            <button onClick={() => setIsSettingsPanelOpen(!isSettingsPanelOpen)} className="p-1 -m-1">
+              <ChevronDown className={`h-5 w-5 transition-transform ${isSettingsPanelOpen ? "rotate-180" : ""}`} />
+            </button>
+          </div>
           {isSettingsPanelOpen && (
             <SettingsPanel
               model={selectedModel}
               onUpdate={handleModelUpdate}
-              onDelete={() => { setSelectedItems(new Set([selectedModel.id])); handleBulkDelete() }}
+              onDelete={() => {
+                setSelectedItems(new Set([selectedModel.id]))
+                handleBulkDelete()
+              }}
               onThumbnailUpload={handleThumbnailUpload}
               onCaptureThumbnail={handleCaptureThumbnail}
               onDeleteThumbnail={handleDeleteThumbnail}
@@ -418,12 +669,27 @@ export default function GalleryPage() {
               onBgColor2Change={setBgColor2}
               bgImage={bgImage}
               onBgImageChange={setBgImage}
-              fieldOfView={fieldOfView}
-              onFieldOfViewChange={setFieldOfView}
+              materialMode={materialMode}
+              onMaterialModeChange={setMaterialMode}
+              matOverrideEnabled={matOverrideEnabled}
+              onMatOverrideEnabledChange={setMatOverrideEnabled}
+              matBaseColor={matBaseColor}
+              onMatBaseColorChange={setMatBaseColor}
+              matMetalness={matMetalness}
+              onMatMetalnessChange={setMatMetalness}
+              matRoughness={matRoughness}
+              onMatRoughnessChange={setMatRoughness}
+              matClearcoat={matClearcoat}
+              onMatClearcoatChange={setMatClearcoat}
+              matClearcoatRoughness={matClearcoatRough}
+              onMatClearcoatRoughnessChange={setMatClearcoatRough}
+              matIOR={matIOR}
+              onMatIORChange={setMatIOR}
+              matTransmission={matTransmission}
+              onMatTransmissionChange={setMatTransmission}
               onSaveView={handleSaveViewSettings}
               onDeleteView={handleDeleteViewSettings}
               onResetView={() => resetViewSettings(selectedModel.view_settings)}
-              onUnifyModel={handleUnifyAndSave}
               onApplyPreset={(n) => applyPreset(n)}
               presets={lightingPresets.map((p) => p.name)}
             />
@@ -431,137 +697,297 @@ export default function GalleryPage() {
         </div>
 
         <div className="absolute bottom-4 left-1/2 -translate-x-1/2 bg-black/50 backdrop-blur-sm p-2 rounded-full flex items-center gap-1">
-          <Button variant={materialMode === "white" ? "secondary" : "ghost"} size="icon" onClick={() => setMaterialMode("white")} className="text-white rounded-full"><div className="w-6 h-6 rounded-full bg-white" /></Button>
-          <Button variant={materialMode === "pbr" ? "secondary" : "ghost"} size="icon" onClick={() => setMaterialMode("pbr")} className="text-white rounded-full"><Palette /></Button>
-          <Button variant={materialMode === "normal" ? "secondary" : "ghost"} size="icon" onClick={() => setMaterialMode("normal")} className="text-white rounded-full"><div className="w-6 h-6 rounded-full bg-gradient-to-br from-red-500 via-green-500 to-blue-500" /></Button>
-          <Button variant="ghost" size="icon" onClick={() => { const a = document.createElement("a"); a.href = selectedModel.model_url; a.download = `${selectedModel.name}.glb`; document.body.appendChild(a); a.click(); document.body.removeChild(a) }} className="text-white rounded-full"><Download /></Button>
+          <Button variant={materialMode === "white" ? "secondary" : "ghost"} size="icon" onClick={() => setMaterialMode("white")} className="text-white rounded-full">
+            <div className="w-6 h-6 rounded-full bg-white" />
+          </Button>
+          <Button variant={materialMode === "pbr" ? "secondary" : "ghost"} size="icon" onClick={() => setMaterialMode("pbr")} className="text-white rounded-full">
+            <Palette />
+          </Button>
+          <Button variant={materialMode === "normal" ? "secondary" : "ghost"} size="icon" onClick={() => setMaterialMode("normal")} className="text-white rounded-full">
+            <div className="w-6 h-6 rounded-full bg-gradient-to-br from-red-500 via-green-500 to-blue-500" />
+          </Button>
+          <Button
+            variant="ghost"
+            size="icon"
+            onClick={() => {
+              const a = document.createElement("a")
+              a.href = selectedModel.model_url
+              a.download = `${selectedModel.name}.glb`
+              document.body.appendChild(a)
+              a.click()
+              document.body.removeChild(a)
+            }}
+            className="text-white rounded-full"
+          >
+            <Download />
+          </Button>
         </div>
       </div>
     )
   }
 
+  const activeFilterCount = useMemo(() => {
+    let n = 0
+    if (filterVisibility !== "all") n++
+    if (filterFolderId) n++
+    if (filterDate !== "any") n++
+    if (filterHasThumb !== "any") n++
+    return n
+  }, [filterVisibility, filterFolderId, filterDate, filterHasThumb])
+
   return (
-    <div className="bg-background text-foreground h-full flex flex-col">
-      <SidebarProvider defaultOpen>
-        <Sidebar collapsible="icon" variant="floating">
-          <SidebarHeader>
-            <div className="flex items-center gap-2 group-data-[collapsible=icon]:justify-center">
-              <SidebarTrigger /><h1 className="font-semibold text-lg group-data-[collapsible=icon]:hidden">My Models</h1>
-            </div>
-          </SidebarHeader>
-          <SidebarContent>
-            <SidebarMenu>
-              <SidebarMenuItem><SidebarMenuButton onClick={() => document.querySelector<HTMLInputElement>('input[type="file"]')?.click()} tooltip="Upload Models"><Upload /><span>Upload</span></SidebarMenuButton></SidebarMenuItem>
-              <SidebarMenuItem><SidebarMenuButton onClick={() => handleBreadcrumbClick(null)} isActive={currentFolderId === null} tooltip="Assets"><Grid /><span>Assets</span></SidebarMenuButton></SidebarMenuItem>
-              <SidebarMenuItem><SidebarMenuButton onClick={() => setIsNewFolderDialogOpen(true)} tooltip="New Folder"><FolderPlus /><span>New Folder</span></SidebarMenuButton></SidebarMenuItem>
-            </SidebarMenu>
-          </SidebarContent>
-        </Sidebar>
-        <SidebarInset>
-          <header className="flex items-center justify-between p-4 border-b gap-4">
-            <div className="flex items-center text-sm">
-              {breadcrumbs.map((crumb, index) => (
-                <Fragment key={crumb.id || "root"}>
-                  <button onClick={() => handleBreadcrumbClick(crumb.id)} className="hover:underline disabled:text-foreground disabled:no-underline" disabled={index === breadcrumbs.length - 1}>{crumb.name}</button>
-                  {index === breadcrumbs.length - 1 && gallery?.currentFolder && (
-                    <Button variant="ghost" size="icon" className="h-6 w-6 ml-1" onClick={() => setEditingFolder(gallery.currentFolder)}><Info className="h-4 w-4" /></Button>
-                  )}
-                  {index < breadcrumbs.length - 1 && <ChevronRight className="h-4 w-4 mx-1 text-muted-foreground" />}
-                </Fragment>
-              ))}
-            </div>
-            <div className="flex items-center gap-4">
-              <div className="relative"><Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" /><Input type="search" placeholder="Search..." className="pl-8 w-48 md:w-64" value={searchQuery} onChange={(e) => setSearchQuery(e.target.value)} /></div>
-              <DropdownMenu>
-                <DropdownMenuTrigger asChild><Button variant="outline" size="icon" className="shrink-0 bg-transparent"><ListFilter className="h-4 w-4" /><span className="sr-only">Sort</span></Button></DropdownMenuTrigger>
-                <DropdownMenuContent align="end">
-                  <DropdownMenuLabel>Sort by</DropdownMenuLabel>
-                  <DropdownMenuRadioGroup value={sortOption} onValueChange={setSortOption}>
-                    <DropdownMenuRadioItem value="created_at-desc">Most Recent</DropdownMenuRadioItem>
-                    <DropdownMenuRadioItem value="name-asc">Name (A-Z)</DropdownMenuRadioItem>
-                    <DropdownMenuRadioItem value="name-desc">Name (Z-A)</DropdownMenuRadioItem>
-                  </DropdownMenuRadioGroup>
-                </DropdownMenuContent>
-              </DropdownMenu>
-            </div>
-          </header>
-
-          <main className="relative flex-1 p-4 md:p-8 overflow-y-auto" onClick={() => setSelectedItems(new Set())} onDrop={(e) => { e.preventDefault(); handleUploadAction(e.dataTransfer.files) }} onDragOver={(e) => e.preventDefault()}>
-            <input type="file" className="hidden" multiple accept=".glb" onChange={(e) => handleUploadAction(e.target.files)} />
-            {isLoading && <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-4">{Array.from({ length: 18 }).map((_, i) => <Skeleton key={i} className="aspect-square rounded-lg" />)}</div>}
-            {error && <div className="text-center text-destructive">Failed to load gallery.</div>}
-            {!isLoading && filteredItems.length === 0 && (
-              <div className="text-center text-muted-foreground flex flex-col items-center justify-center h-full pt-20">
-                <FolderIcon size={64} className="mb-4" /><h2 className="text-2xl font-semibold">This folder is empty</h2><p className="mt-2">Drag & drop .glb files here or use the upload button.</p>
-              </div>
-            )}
-            <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-4">
-              {filteredItems.map((item) => (
-                <ItemContextMenu
-                  key={item.id}
-                  item={item}
-                  onRename={() => setRenameItem(item)}
-                  onDelete={() => { setSelectedItems(new Set([item.id])); handleBulkDelete() }}
-                  onMove={(dst) => { setSelectedItems(new Set([item.id])); handleBulkMove(dst) }}
-                  onSetPublic={(p) => { setSelectedItems(new Set([item.id])); handleBulkSetPublic(p) }}
-                  allFolders={allFolders}
-                >
-                  <div
-                    onClick={(e) => handleItemClick(e, item)}
-                    onDoubleClick={() => (item.type === "folder" ? handleNavigateToFolder(item.id) : handleModelClick(item))}
-                    className={cn("group relative aspect-square rounded-lg overflow-hidden cursor-pointer transition-all duration-200", selectedItems.has(item.id) && "ring-2 ring-primary ring-offset-2 ring-offset-background")}
-                  >
-                    {item.type === "folder" ? (
-                      <div className="w-full h-full flex flex-col items-center justify-center bg-muted hover:bg-secondary transition-colors">
-                        <FolderIcon className="w-1/3 h-1/3 text-foreground/50" /><p className="text-sm font-semibold truncate mt-2 text-center w-full px-2">{item.name}</p>
-                      </div>
-                    ) : (
-                      <>
-                        <img src={item.thumbnail_url || "/placeholder.svg"} alt={item.name} className="w-full h-full object-contain transition-transform duration-300 group-hover:scale-110 bg-muted" onError={(e) => { (e.target as HTMLImageElement).src = `/placeholder.svg?width=400&height=400&query=error` }} />
-                        <div className="absolute inset-0 bg-black/60 opacity-0 group-hover:opacity-100 transition-opacity duration-300 flex items-end p-2"><p className="text-sm font-semibold truncate text-white">{item.name}</p></div>
-                      </>
-                    )}
-                    <div className={cn("absolute top-2 left-2 transition-opacity", selectedItems.has(item.id) ? "opacity-100" : "opacity-0 group-hover:opacity-100")}>
-                      <Checkbox checked={selectedItems.has(item.id)} onCheckedChange={(c) => { const next = new Set(selectedItems); c ? next.add(item.id) : next.delete(item.id); setSelectedItems(next) }} className="bg-background/50 border-white/50 data-[state=checked]:bg-primary" />
-                    </div>
-                    <div className="absolute bottom-2 left-2">{item.is_public ? <Globe className="h-4 w-4 text-white/70" /> : <Lock className="h-4 w-4 text-white/70" />}</div>
-                  </div>
-                </ItemContextMenu>
-              ))}
-              {!isLoading && !searchQuery && (
-                <div onClick={() => document.querySelector<HTMLInputElement>('input[type="file"]')?.click()} className="group relative aspect-square rounded-lg border-2 border-dashed border-muted-foreground/50 flex flex-col items-center justify-center text-muted-foreground hover:bg-muted hover:border-primary hover:text-primary transition-colors cursor-pointer">
-                  <Upload className="w-1/3 h-1/3 transition-transform group-hover:scale-110" /><p className="text-sm font-semibold mt-2">Upload Models</p>
-                </div>
-              )}
-            </div>
-          </main>
-
-          {selectedItems.size > 0 && (
-            <BulkActionBar
-              selectedCount={selectedItems.size}
-              onClear={() => setSelectedItems(new Set())}
-              onDelete={handleBulkDelete}
-              onMove={handleBulkMove}
-              onSetPublic={handleBulkSetPublic}
-              onDownload={() => {
-                const models = Array.from(selectedItems).map((id) => galleryItems.find((i) => i.id === id)).filter((i): i is Model & { type: "model" } => !!i && i.type === "model")
-                models.forEach((m) => { const a = document.createElement("a"); a.href = m.model_url; a.download = `${m.name}.glb`; document.body.appendChild(a); a.click(); document.body.removeChild(a) })
-              }}
-              allItems={galleryItems}
-              selectedIds={selectedItems}
-              allFolders={allFolders}
-              currentFolderId={currentFolderId}
-            />
+    <div className="min-h-screen bg-black text-white relative">
+      <div className="flex items-center justify-between px-4 md:px-8 py-4">
+        <div className="text-sm text-white/70">
+          {breadcrumbs.map((c, i) => (
+            <Fragment key={c.id ?? "root"}>
+              <span className={i === breadcrumbs.length - 1 ? "text-white" : "text-white/60"}>{c.name}</span>
+              {i < breadcrumbs.length - 1 && <span className="mx-1 text-white/30">/</span>}
+            </Fragment>
+          ))}
+          {gallery?.currentFolder && (
+            <Button variant="ghost" size="icon" className="h-6 w-6 ml-2" onClick={() => setEditingFolder(gallery.currentFolder)}>
+              <Info className="h-4 w-4" />
+            </Button>
           )}
-        </SidebarInset>
-      </SidebarProvider>
+        </div>
+        <div className="flex items-center gap-2">
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <Button variant="outline" className="h-8 px-3 border-white/20 bg-transparent flex items-center gap-2">
+                <ListFilter className="h-4 w-4" />
+                Filters{activeFilterCount ? <span className="ml-1 rounded-full bg-white text-black text-xs px-2 py-0.5">{activeFilterCount}</span> : null}
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end" className="w-72">
+              <DropdownMenuLabel>Visibility</DropdownMenuLabel>
+              <DropdownMenuRadioGroup value={filterVisibility} onValueChange={(v: any) => setFilterVisibility(v)}>
+                <DropdownMenuRadioItem value="all">All</DropdownMenuRadioItem>
+                <DropdownMenuRadioItem value="public">Public</DropdownMenuRadioItem>
+                <DropdownMenuRadioItem value="private">Private</DropdownMenuRadioItem>
+              </DropdownMenuRadioGroup>
+              <DropdownMenuSeparator />
+              <DropdownMenuLabel>Folder</DropdownMenuLabel>
+              <DropdownMenuRadioGroup value={filterFolderId ?? "any"} onValueChange={(v: string) => setFilterFolderId(v === "any" ? null : v)}>
+                <DropdownMenuRadioItem value="any">All folders</DropdownMenuRadioItem>
+                {(allFolders ?? []).map((f) => (
+                  <DropdownMenuRadioItem key={f.id} value={f.id}>{f.name}</DropdownMenuRadioItem>
+                ))}
+              </DropdownMenuRadioGroup>
+              <DropdownMenuSeparator />
+              <DropdownMenuLabel>Date</DropdownMenuLabel>
+              <DropdownMenuRadioGroup value={filterDate} onValueChange={(v: any) => setFilterDate(v)}>
+                <DropdownMenuRadioItem value="any">Any time</DropdownMenuRadioItem>
+                <DropdownMenuRadioItem value="24h">Last 24 hours</DropdownMenuRadioItem>
+                <DropdownMenuRadioItem value="7d">Last 7 days</DropdownMenuRadioItem>
+                <DropdownMenuRadioItem value="30d">Last 30 days</DropdownMenuRadioItem>
+                <DropdownMenuRadioItem value="365d">Last year</DropdownMenuRadioItem>
+              </DropdownMenuRadioGroup>
+              <DropdownMenuSeparator />
+              <DropdownMenuLabel>Thumbnails</DropdownMenuLabel>
+              <DropdownMenuRadioGroup value={filterHasThumb} onValueChange={(v: any) => setFilterHasThumb(v)}>
+                <DropdownMenuRadioItem value="any">Any</DropdownMenuRadioItem>
+                <DropdownMenuRadioItem value="yes">Has thumbnail</DropdownMenuRadioItem>
+                <DropdownMenuRadioItem value="no">Missing thumbnail</DropdownMenuRadioItem>
+              </DropdownMenuRadioGroup>
+              <DropdownMenuSeparator />
+              <DropdownMenuCheckboxItem checked={false} onCheckedChange={() => {
+                setFilterVisibility("all")
+                setFilterFolderId(null)
+                setFilterDate("any")
+                setFilterHasThumb("any")
+              }}>
+                Clear filters
+              </DropdownMenuCheckboxItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
 
-      <NewFolderDialog open={isNewFolderDialogOpen} onOpenChange={setIsNewFolderDialogOpen} onCreate={async (name) => { await fetch("/api/folders", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ name, parent_id: currentFolderId }) }); mutate(galleryUrl) }} />
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <Button variant="outline" size="icon" className="h-8 w-8 border-white/20 bg-transparent">
+                <ListFilter className="h-4 w-4" />
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end">
+              <DropdownMenuLabel>Sort by</DropdownMenuLabel>
+              <DropdownMenuRadioGroup value={sortOption} onValueChange={setSortOption}>
+                <DropdownMenuRadioItem value="created_at-desc">Newest</DropdownMenuRadioItem>
+                <DropdownMenuRadioItem value="created_at-asc">Oldest</DropdownMenuRadioItem>
+                <DropdownMenuRadioItem value="updated_at-desc">Recently updated</DropdownMenuRadioItem>
+                <DropdownMenuRadioItem value="name-asc">Name (A–Z)</DropdownMenuRadioItem>
+                <DropdownMenuRadioItem value="name-desc">Name (Z–A)</DropdownMenuRadioItem>
+                <DropdownMenuRadioItem value="visibility-desc">Visibility</DropdownMenuRadioItem>
+              </DropdownMenuRadioGroup>
+            </DropdownMenuContent>
+          </DropdownMenu>
+
+          <Button variant="secondary" size="icon" className="h-8 w-8 rounded-full" onClick={() => document.querySelector<HTMLInputElement>('input[type="file"]')?.click()}>
+            <Plus className="h-4 w-4" />
+          </Button>
+        </div>
+      </div>
+
+      <div className={cn("px-4 md:px-8", filteredItems.length === 0 && !searchQuery ? "pt-24" : "pt-6")}>
+        <div className={cn("mx-auto", filteredItems.length === 0 && !searchQuery ? "max-w-2xl" : "max-w-4xl")}>
+          <div className={cn("relative", filteredItems.length === 0 && !searchQuery ? "" : "mb-4")}>
+            <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-5 w-5 text-white/50" />
+            <Input
+              type="search"
+              placeholder="Search for models, or tags..."
+              className="pl-11 pr-4 h-12 rounded-full bg-white/10 border-white/20 text-white placeholder:text-white/60"
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+            />
+          </div>
+
+          <div className="flex items-center gap-2 flex-wrap">
+            {(["all", "models", "public", "drafts"] as Pill[]).map((k) => (
+              <button
+                key={k}
+                className={cn("px-3 py-1.5 rounded-full text-sm", pill === k ? "bg-white text-black" : "bg-white/10 text-white/80 hover:bg-white/20")}
+                onClick={() => setPill(k)}
+              >
+                {k === "all" ? "All" : k[0].toUpperCase() + k.slice(1)}
+              </button>
+            ))}
+          </div>
+        </div>
+      </div>
+
+      <main
+        className="relative px-4 md:px-8 pb-24"
+        onClick={() => setSelectedItems(new Set())}
+        onDrop={(e) => {
+          e.preventDefault()
+          handleUploadAction(e.dataTransfer.files)
+        }}
+        onDragOver={(e) => e.preventDefault()}
+      >
+        <input type="file" className="hidden" multiple accept=".glb" onChange={(e) => handleUploadAction(e.target.files)} />
+
+        {isLoading && (
+          <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 xl:grid-cols-6 gap-4 mt-6">
+            {Array.from({ length: 18 }).map((_, i) => (
+              <Skeleton key={i} className="aspect-square rounded-lg bg-white/10" />
+            ))}
+          </div>
+        )}
+
+        {error && <div className="text-center text-destructive mt-12">Failed to load gallery.</div>}
+
+        {!isLoading && filteredItems.length === 0 && searchQuery && <div className="text-center text-white/60 mt-10">No results.</div>}
+
+        {!isLoading && filteredItems.length > 0 && (
+          <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 xl:grid-cols-6 gap-4 mt-6">
+            {filteredItems.map((item) => (
+              <ItemContextMenu
+                key={item.id}
+                item={item as unknown as GalleryItem}
+                onRename={() => setRenameItem(item)}
+                onDelete={() => {
+                  setSelectedItems(new Set([item.id]))
+                  handleBulkDelete()
+                }}
+                onMove={handleBulkMove}
+                onSetPublic={(p) => {
+                  setSelectedItems(new Set([item.id]))
+                  handleBulkSetPublic(p)
+                }}
+                allFolders={allFolders}
+              >
+                <div
+                  onClick={(e) => handleItemClick(e, item)}
+                  onDoubleClick={() => handleModelClick(item)}
+                  className={cn(
+                    "group relative aspect-square rounded-lg overflow-hidden cursor-pointer transition-all duration-200 bg-white/5",
+                    selectedItems.has(item.id) && "ring-2 ring-white ring-offset-[3px] ring-offset-black",
+                  )}
+                >
+                  <>
+                    <img
+                      src={item.thumbnail_url || "/placeholder.svg"}
+                      alt={item.name}
+                      className="w-full h-full object-contain transition-transform duration-300 group-hover:scale-110"
+                      onError={(e) => {
+                        ; (e.target as HTMLImageElement).src = `/placeholder.svg?width=400&height=400&query=error`
+                      }}
+                    />
+                    <div className="absolute inset-0 bg-black/60 opacity-0 group-hover:opacity-100 transition-opacity duration-300 flex items-end p-2">
+                      <p className="text-sm font-semibold truncate text-white">{item.name}</p>
+                    </div>
+                  </>
+                  <div className={cn("absolute top-2 left-2 transition-opacity", selectedItems.has(item.id) ? "opacity-100" : "opacity-0 group-hover:opacity-100")}>
+                    <Checkbox
+                      checked={selectedItems.has(item.id)}
+                      onCheckedChange={(c) => {
+                        const next = new Set(selectedItems)
+                        c ? next.add(item.id) : next.delete(item.id)
+                        setSelectedItems(next)
+                      }}
+                      className="bg-black/50 border-white/50 data-[state=checked]:bg-white data-[state=checked]:text-black"
+                    />
+                  </div>
+                  <div className="absolute bottom-2 left-2">{item.is_public ? <Globe className="h-4 w-4 text-white/70" /> : <Lock className="h-4 w-4 text-white/70" />}</div>
+                </div>
+              </ItemContextMenu>
+            ))}
+            <div
+              onClick={() => document.querySelector<HTMLInputElement>('input[type="file"]')?.click()}
+              className="group relative aspect-square rounded-lg border-2 border-dashed border-white/20 flex flex-col items-center justify-center text-white/60 hover:bg-white/5 hover:border-white/40 transition-colors cursor-pointer"
+            >
+              <Upload className="w-1/3 h-1/3 transition-transform group-hover:scale-110" />
+              <p className="text-sm font-semibold mt-2">Upload Models</p>
+            </div>
+          </div>
+        )}
+      </main>
+
+      {selectedItems.size > 0 && (
+        <BulkActionBar
+          selectedCount={selectedItems.size}
+          onClear={() => setSelectedItems(new Set())}
+          onDelete={handleBulkDelete}
+          onMove={handleBulkMove}
+          onSetPublic={handleBulkSetPublic}
+          onDownload={() => {
+            const models = Array.from(selectedItems)
+              .map((id) => gridModels.find((i) => i.id === id))
+              .filter((i): i is Model & { type: "model" } => !!i)
+            models.forEach((m) => {
+              const a = document.createElement("a")
+              a.href = m.model_url
+              a.download = `${m.name}.glb`
+              document.body.appendChild(a)
+              a.click()
+              document.body.removeChild(a)
+            })
+          }}
+          allItems={gridModels as unknown as GalleryItem[]}
+          selectedIds={selectedItems}
+          allFolders={allFolders}
+          currentFolderId={currentFolderId}
+        />
+      )}
+
+      <NewFolderDialog
+        open={isNewFolderDialogOpen}
+        onOpenChange={setIsNewFolderDialogOpen}
+        onCreate={async (name) => {
+          await fetch("/api/folders", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ name, parent_id: currentFolderId }) })
+          mutate(galleryUrl)
+          setRefreshKey((k) => k + 1)
+        }}
+      />
       {renameItem && <RenameDialog item={renameItem} onOpenChange={() => setRenameItem(null)} onRename={handleRename} />}
       {editingFolder && (
-        <FolderDescriptionDialog folder={editingFolder} open={!!editingFolder} onOpenChange={() => setEditingFolder(null)} onSave={(d) => {
-          fetch(`/api/folders/${editingFolder.id}`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ description: d }) }).then(() => mutate(galleryUrl))
-        }} />
+        <FolderDescriptionDialog
+          folder={editingFolder}
+          open={!!editingFolder}
+          onOpenChange={() => setEditingFolder(null)}
+          onSave={(d) => {
+            fetch(`/api/folders/${editingFolder.id}`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ description: d }) }).then(() => mutate(galleryUrl))
+          }}
+        />
       )}
     </div>
   )
@@ -620,7 +1046,8 @@ export function BulkActionBar({ selectedCount, onClear, onDelete, onMove, onSetP
 
 === /workspaces/space.iverfinne.no/components/gallery/settings-panel.tsx ===
 
-﻿"use client"
+﻿// === /workspaces/space.iverfinne.no/components/gallery/settings-panel.tsx ===
+"use client"
 
 import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from "@/components/ui/accordion"
 import { Button } from "@/components/ui/button"
@@ -631,18 +1058,33 @@ import { Slider } from "@/components/ui/slider"
 import { Switch } from "@/components/ui/switch"
 import type { Light, Model } from "@/types"
 import { useGesture } from "@use-gesture/react"
-import { Camera, CopyIcon as Clone, Crosshair, Eye, EyeOff, Globe, Lock, Plus, RotateCcw, Save, Scale, Trash2, Upload } from "lucide-react"
+import { Camera, CopyIcon as Clone, Crosshair, Eye, EyeOff, Globe, Lock, Plus, RotateCcw, Save, Trash2, Upload } from "lucide-react"
 import React, { useRef, useState } from "react"
 
-function EditableValue({ value, onSave, units = "", className, inputClassName }: {
-    value: string | number; onSave: (newValue: string) => void; units?: string; className?: string; inputClassName?: string
+function EditableValue({
+    value,
+    onSave,
+    units = "",
+    className,
+    inputClassName,
+}: {
+    value: string | number
+    onSave: (newValue: string) => void
+    units?: string
+    className?: string
+    inputClassName?: string
 }) {
     const [isEditing, setIsEditing] = useState(false)
     const [currentValue, setCurrentValue] = useState(value.toString())
     const inputRef = useRef<HTMLInputElement>(null)
     React.useEffect(() => setCurrentValue(value.toString()), [value])
-    React.useEffect(() => { if (isEditing) inputRef.current?.select() }, [isEditing])
-    const handleSave = () => { onSave(currentValue); setIsEditing(false) }
+    React.useEffect(() => {
+        if (isEditing) inputRef.current?.select()
+    }, [isEditing])
+    const handleSave = () => {
+        onSave(currentValue)
+        setIsEditing(false)
+    }
     return isEditing ? (
         <Input
             ref={inputRef}
@@ -650,29 +1092,46 @@ function EditableValue({ value, onSave, units = "", className, inputClassName }:
             value={currentValue}
             onChange={(e) => setCurrentValue(e.target.value)}
             onBlur={handleSave}
-            onKeyDown={(e) => { if (e.key === "Enter") handleSave(); if (e.key === "Escape") setIsEditing(false) }}
+            onKeyDown={(e) => {
+                if (e.key === "Enter") handleSave()
+                if (e.key === "Escape") setIsEditing(false)
+            }}
             className={`h-6 text-xs w-full text-right bg-white/20 border-white/30 ${inputClassName ?? ""}`}
         />
     ) : (
-        <span onClick={() => setIsEditing(true)} className={`cursor-pointer text-xs w-full text-right truncate ${className ?? ""}`} title={typeof value === "number" ? (value as number).toFixed(2) : (value as string)}>
-            {typeof value === "number" ? (value as number).toFixed(units === "K" ? 0 : 1) : value}{units}
+        <span
+            onClick={() => setIsEditing(true)}
+            className={`cursor-pointer text-xs w-full text-right truncate ${className ?? ""}`}
+            title={typeof value === "number" ? (value as number).toFixed(2) : (value as string)}
+        >
+            {typeof value === "number" ? (value as number).toFixed(units === "K" ? 0 : 1) : value}
+            {units}
         </span>
     )
 }
 
 function DirectionalPad({ value, onChange }: { value: { x: number; z: number }; onChange: (v: { x: number; z: number }) => void }) {
     const padRef = useRef<HTMLDivElement>(null)
-    const bind = useGesture({
-        onDrag: ({ xy }) => {
-            if (!padRef.current) return
-            const rect = padRef.current.getBoundingClientRect(), half = rect.width / 2
-            let x = xy[0] - rect.left - half, z = xy[1] - rect.top - half
-            const d = Math.hypot(x, z)
-            if (d > half) { x = (x / d) * half; z = (z / d) * half }
-            onChange({ x: (x / half) * 5, z: (z / half) * 5 })
+    const bind = useGesture(
+        {
+            onDrag: ({ xy }) => {
+                if (!padRef.current) return
+                const rect = padRef.current.getBoundingClientRect(),
+                    half = rect.width / 2
+                let x = xy[0] - rect.left - half,
+                    z = xy[1] - rect.top - half
+                const d = Math.hypot(x, z)
+                if (d > half) {
+                    x = (x / d) * half
+                    z = (z / d) * half
+                }
+                onChange({ x: (x / half) * 5, z: (z / half) * 5 })
+            },
         },
-    }, { drag: { filterTaps: true } })
-    const handleX = (value.x / 5) * 50, handleZ = (value.z / 5) * 50
+        { drag: { filterTaps: true } },
+    )
+    const handleX = (value.x / 5) * 50,
+        handleZ = (value.z / 5) * 50
     return (
         <div ref={padRef} {...bind()} className="w-24 h-24 bg-white/10 rounded-full relative cursor-pointer border border-white/20 flex items-center justify-center">
             <div className="w-full h-px bg-white/20 absolute" />
@@ -682,9 +1141,7 @@ function DirectionalPad({ value, onChange }: { value: { x: number; z: number }; 
     )
 }
 
-function LightSettings({ light, onLightChange, onFocus }: {
-    light: Light; onLightChange: (id: number, newValues: Partial<Omit<Light, "id">>) => void; onFocus: (id: number) => void
-}) {
+function LightSettings({ light, onLightChange, onFocus }: { light: Light; onLightChange: (id: number, newValues: Partial<Omit<Light, "id">>) => void; onFocus: (id: number) => void }) {
     return (
         <div className="space-y-3 text-xs mt-2 bg-white/5 p-3 rounded-md">
             <div className="flex items-center justify-between">
@@ -704,12 +1161,30 @@ function LightSettings({ light, onLightChange, onFocus }: {
                 </div>
                 <DirectionalPad value={{ x: light.targetPosition[0], z: light.targetPosition[2] }} onChange={({ x, z }) => onLightChange(light.id, { targetPosition: [x, light.targetPosition[1], z] })} />
             </div>
-            <div className="flex items-center justify-between"><label>Target Height (Y)</label><Slider value={[light.targetPosition[1]]} onValueChange={([v]) => onLightChange(light.id, { targetPosition: [light.targetPosition[0], v, light.targetPosition[2]] })} min={-10} max={10} step={0.1} className="w-1/2" /></div>
-            <div className="flex items-center justify-between"><label>Intensity</label><Slider value={[light.intensity]} onValueChange={([v]) => onLightChange(light.id, { intensity: v })} min={0} max={250} step={0.1} className="w-1/2" /></div>
-            <div className="flex items-center justify-between"><label>Color Temp</label><Slider value={[light.kelvin]} onValueChange={([v]) => onLightChange(light.id, { kelvin: v })} min={1000} max={12000} step={100} className="w-1/2" /></div>
-            <div className="flex items-center justify-between"><label>Cone Angle</label><Slider value={[light.angle]} onValueChange={([v]) => onLightChange(light.id, { angle: v })} min={0} max={90} step={1} className="w-1/2" /></div>
-            <div className="flex items-center justify-between"><label>Penumbra</label><Slider value={[light.penumbra]} onValueChange={([v]) => onLightChange(light.id, { penumbra: v })} min={0} max={1} step={0.01} className="w-1/2" /></div>
-            <div className="flex items-center justify-between"><label>Distance</label><Slider value={[light.distance ?? 0]} onValueChange={([v]) => onLightChange(light.id, { distance: v })} min={0} max={20} step={0.1} className="w-1/2" /></div>
+            <div className="flex items-center justify-between">
+                <label>Target Height (Y)</label>
+                <Slider value={[light.targetPosition[1]]} onValueChange={([v]) => onLightChange(light.id, { targetPosition: [light.targetPosition[0], v, light.targetPosition[2]] })} min={-10} max={10} step={0.1} className="w-1/2" />
+            </div>
+            <div className="flex items-center justify-between">
+                <label>Intensity</label>
+                <Slider value={[light.intensity]} onValueChange={([v]) => onLightChange(light.id, { intensity: v })} min={0} max={250} step={0.1} className="w-1/2" />
+            </div>
+            <div className="flex items-center justify-between">
+                <label>Color Temp</label>
+                <Slider value={[light.kelvin]} onValueChange={([v]) => onLightChange(light.id, { kelvin: v })} min={1000} max={12000} step={100} className="w-1/2" />
+            </div>
+            <div className="flex items-center justify-between">
+                <label>Cone Angle</label>
+                <Slider value={[light.angle]} onValueChange={([v]) => onLightChange(light.id, { angle: v })} min={0} max={90} step={1} className="w-1/2" />
+            </div>
+            <div className="flex items-center justify-between">
+                <label>Penumbra</label>
+                <Slider value={[light.penumbra]} onValueChange={([v]) => onLightChange(light.id, { penumbra: v })} min={0} max={1} step={0.01} className="w-1/2" />
+            </div>
+            <div className="flex items-center justify-between">
+                <label>Distance</label>
+                <Slider value={[light.distance ?? 0]} onValueChange={([v]) => onLightChange(light.id, { distance: v })} min={0} max={20} step={0.1} className="w-1/2" />
+            </div>
         </div>
     )
 }
@@ -721,6 +1196,7 @@ export interface SettingsPanelProps {
     onThumbnailUpload: (file: File) => void
     onCaptureThumbnail: () => void
     onDeleteThumbnail: () => void
+    // lights
     lights: Light[]
     onLightChange: (id: number, newValues: Partial<Omit<Light, "id">>) => void
     addLight: () => void
@@ -732,6 +1208,7 @@ export interface SettingsPanelProps {
     onFocusLight: (id: number) => void
     lightsEnabled: boolean
     onLightsEnabledChange: (enabled: boolean) => void
+    // environment
     environmentEnabled: boolean
     onEnvironmentEnabledChange: (enabled: boolean) => void
     bloomEnabled: boolean
@@ -744,50 +1221,126 @@ export interface SettingsPanelProps {
     onBgColor2Change: (value: string) => void
     bgImage: string | null
     onBgImageChange: (value: string | null) => void
-    fieldOfView: number
-    onFieldOfViewChange: (value: number) => void
+    // materials
+    materialMode: "pbr" | "normal" | "white"
+    onMaterialModeChange: (m: "pbr" | "normal" | "white") => void
+    matOverrideEnabled: boolean
+    onMatOverrideEnabledChange: (v: boolean) => void
+    matBaseColor: string
+    onMatBaseColorChange: (v: string) => void
+    matMetalness: number
+    onMatMetalnessChange: (v: number) => void
+    matRoughness: number
+    onMatRoughnessChange: (v: number) => void
+    matClearcoat: number
+    onMatClearcoatChange: (v: number) => void
+    matClearcoatRoughness: number
+    onMatClearcoatRoughnessChange: (v: number) => void
+    matIOR: number
+    onMatIORChange: (v: number) => void
+    matTransmission: number
+    onMatTransmissionChange: (v: number) => void
+    // view
     onSaveView: () => void
     onDeleteView: () => void
     onResetView: () => void
-    onUnifyModel: () => void
+    // presets
     onApplyPreset: (name: string) => void
     presets: string[]
 }
 
 export function SettingsPanel(p: SettingsPanelProps) {
     const {
-        model, onUpdate, onDelete, onThumbnailUpload, onCaptureThumbnail, onDeleteThumbnail,
-        lights, onLightChange, addLight, removeLight, cloneLight, toggleLightVisibility,
-        selectedLightId, onSelectLight, onFocusLight,
-        lightsEnabled, onLightsEnabledChange,
-        environmentEnabled, onEnvironmentEnabledChange,
-        bloomEnabled, onBloomEnabledChange,
-        bgType, onBgTypeChange, bgColor1, onBgColor1Change, bgColor2, onBgColor2Change, bgImage, onBgImageChange,
-        fieldOfView, onFieldOfViewChange, onSaveView, onDeleteView, onResetView, onUnifyModel,
-        onApplyPreset, presets,
+        model,
+        onUpdate,
+        onDelete,
+        onThumbnailUpload,
+        onCaptureThumbnail,
+        onDeleteThumbnail,
+        // lights
+        lights,
+        onLightChange,
+        addLight,
+        removeLight,
+        cloneLight,
+        toggleLightVisibility,
+        selectedLightId,
+        onSelectLight,
+        onFocusLight,
+        lightsEnabled,
+        onLightsEnabledChange,
+        // env
+        environmentEnabled,
+        onEnvironmentEnabledChange,
+        bloomEnabled,
+        onBloomEnabledChange,
+        bgType,
+        onBgTypeChange,
+        bgColor1,
+        onBgColor1Change,
+        bgColor2,
+        onBgColor2Change,
+        bgImage,
+        onBgImageChange,
+        // materials
+        materialMode,
+        onMaterialModeChange,
+        matOverrideEnabled,
+        onMatOverrideEnabledChange,
+        matBaseColor,
+        onMatBaseColorChange,
+        matMetalness,
+        onMatMetalnessChange,
+        matRoughness,
+        onMatRoughnessChange,
+        matClearcoat,
+        onMatClearcoatChange,
+        matClearcoatRoughness,
+        onMatClearcoatRoughnessChange,
+        matIOR,
+        onMatIORChange,
+        matTransmission,
+        onMatTransmissionChange,
+        // view
+        onSaveView,
+        onDeleteView,
+        onResetView,
+        // presets
+        onApplyPreset,
+        presets,
     } = p
 
     const [preset, setPreset] = useState<string>(presets[0] ?? "")
     const thumbnailInputRef = useRef<HTMLInputElement>(null)
     const bgImageInputRef = useRef<HTMLInputElement>(null)
 
+    // collapsed-by-default Lights section
+    const [lightsSectionOpen, setLightsSectionOpen] = useState(false)
+
     const handleBgImageUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
-        const file = e.target.files?.[0]; if (!file) return
-        const r = new FileReader(); r.onloadend = () => onBgImageChange(r.result as string); r.readAsDataURL(file)
+        const file = e.target.files?.[0]
+        if (!file) return
+        const r = new FileReader()
+        r.onloadend = () => onBgImageChange(r.result as string)
+        r.readAsDataURL(file)
     }
 
     return (
         <div className="px-4 pb-4 flex flex-col h-full text-white overflow-y-auto">
             <div className="space-y-4 flex-1 overflow-y-auto pr-2 -mr-2">
+                {/* Model controls */}
                 <div className="space-y-2">
                     <div className="flex items-center justify-between text-xs">
                         <label>Name</label>
-                        <div className="w-1/2"><EditableValue value={model.name} onSave={(v) => onUpdate(model.id, { name: v })} /></div>
+                        <div className="w-1/2">
+                            <EditableValue value={model.name} onSave={(v) => onUpdate(model.id, { name: v })} />
+                        </div>
                     </div>
                     <div className="flex items-center justify-between text-xs">
                         <label>Visibility</label>
                         <Button size="sm" className="h-6 bg-transparent" variant="outline" onClick={() => onUpdate(model.id, { is_public: !model.is_public })}>
-                            {model.is_public ? <Globe className="h-3 w-3 mr-1" /> : <Lock className="h-3 w-3 mr-1" />}{model.is_public ? "Public" : "Private"}
+                            {model.is_public ? <Globe className="h-3 w-3 mr-1" /> : <Lock className="h-3 w-3 mr-1" />}
+                            {model.is_public ? "Public" : "Private"}
                         </Button>
                     </div>
                     <div className="flex items-center justify-between text-xs">
@@ -796,84 +1349,148 @@ export function SettingsPanel(p: SettingsPanelProps) {
                             <Button variant="ghost" size="icon" className="h-6 w-6" disabled={model.thumbnail_url.includes("/placeholder.svg")} onClick={onDeleteThumbnail}>
                                 <Trash2 className="h-3 w-3" />
                             </Button>
-                            <Button size="icon" className="h-6 w-6" variant="ghost" onClick={onCaptureThumbnail}><Camera className="h-3 w-3" /></Button>
-                            <Button size="icon" className="h-6 w-6" variant="ghost" onClick={() => thumbnailInputRef.current?.click()}><Upload className="h-3 w-3" /></Button>
+                            <Button size="icon" className="h-6 w-6" variant="ghost" onClick={onCaptureThumbnail}>
+                                <Camera className="h-3 w-3" />
+                            </Button>
+                            <Button size="icon" className="h-6 w-6" variant="ghost" onClick={() => thumbnailInputRef.current?.click()}>
+                                <Upload className="h-3 w-3" />
+                            </Button>
                             <input type="file" ref={thumbnailInputRef} className="hidden" accept="image/*" onChange={(e) => e.target.files && onThumbnailUpload(e.target.files[0])} />
                         </div>
                     </div>
                     <div className="flex items-center justify-between text-xs">
-                        <label>Unify Scale (100mm)</label>
-                        <Button size="icon" className="h-6 w-6" variant="ghost" onClick={onUnifyModel}><Scale className="h-3 w-3" /></Button>
-                    </div>
-                    <div className="flex items-center justify-between text-xs">
                         <label>Delete Model</label>
-                        <Button variant="ghost" size="sm" className="h-6" onClick={onDelete}>Delete</Button>
+                        <Button variant="ghost" size="sm" className="h-6" onClick={onDelete}>
+                            Delete
+                        </Button>
                     </div>
                 </div>
 
                 <Separator className="bg-white/20" />
 
-                <div className="space-y-2">
-                    <div className="flex items-center justify-between">
-                        <div />
-                        <div className="flex items-center gap-2">
-                            <Button variant="ghost" size="icon" className="h-6 w-6" disabled={!model.view_settings} onClick={onDeleteView}><Trash2 className="h-3 w-3" /></Button>
-                            <Button variant="ghost" size="icon" className="h-6 w-6" onClick={onResetView}><RotateCcw className="h-4 w-4" /></Button>
-                            <Button variant="ghost" size="icon" className="h-6 w-6" onClick={onSaveView}><Save className="h-3 w-3" /></Button>
-                        </div>
-                    </div>
-                    <div className="flex items-center justify-between text-xs">
-                        <label>Field of View</label>
-                        <div className="flex items-center gap-2 w-1/2">
-                            <Slider value={[fieldOfView]} onValueChange={([v]) => onFieldOfViewChange(v)} min={10} max={120} step={1} className="w-3/4" />
-                            <EditableValue value={fieldOfView} onSave={(v) => onFieldOfViewChange(Number(v))} className="w-1/4" />
-                        </div>
-                    </div>
-                </div>
-
-                <Separator className="bg-white/20" />
-
+                {/* Materials */}
                 <div className="space-y-3">
                     <div className="flex items-center justify-between">
-                        <h3 className="text-sm font-semibold">Lights</h3>
-                        <Switch checked={lightsEnabled} onCheckedChange={onLightsEnabledChange} />
+                        <h3 className="text-sm font-semibold">Material</h3>
+                        <div className="flex items-center gap-2">
+                            <Select value={materialMode} onValueChange={(v: any) => onMaterialModeChange(v)}>
+                                <SelectTrigger className="h-6 text-xs bg-white/10 border-white/30 w-28">
+                                    <SelectValue placeholder="Mode" />
+                                </SelectTrigger>
+                                <SelectContent>
+                                    <SelectItem value="white">White</SelectItem>
+                                    <SelectItem value="pbr">PBR</SelectItem>
+                                    <SelectItem value="normal">Normal</SelectItem>
+                                </SelectContent>
+                            </Select>
+                        </div>
                     </div>
-                    {lightsEnabled && (
+
+                    <div className="space-y-2 bg-white/5 p-3 rounded-md">
+                        <div className="flex items-center justify-between text-xs">
+                            <label>Override (Clay)</label>
+                            <Switch checked={matOverrideEnabled} onCheckedChange={onMatOverrideEnabledChange} />
+                        </div>
+
+                        {matOverrideEnabled && (
+                            <>
+                                <div className="flex items-center justify-between text-xs">
+                                    <label>Base Color</label>
+                                    <input type="color" value={matBaseColor} onChange={(e) => onMatBaseColorChange(e.target.value)} className="w-6 h-6 p-0 bg-transparent border-none" />
+                                </div>
+                                <div className="flex items-center justify-between text-xs">
+                                    <label>Metallic</label>
+                                    <Slider value={[matMetalness]} onValueChange={([v]) => onMatMetalnessChange(v)} min={0} max={1} step={0.01} className="w-2/3" />
+                                </div>
+                                <div className="flex items-center justify-between text-xs">
+                                    <label>Roughness</label>
+                                    <Slider value={[matRoughness]} onValueChange={([v]) => onMatRoughnessChange(v)} min={0} max={1} step={0.01} className="w-2/3" />
+                                </div>
+                                <div className="flex items-center justify-between text-xs">
+                                    <label>Clearcoat</label>
+                                    <Slider value={[matClearcoat]} onValueChange={([v]) => onMatClearcoatChange(v)} min={0} max={1} step={0.01} className="w-2/3" />
+                                </div>
+                                <div className="flex items-center justify-between text-xs">
+                                    <label>Clearcoat Rough.</label>
+                                    <Slider value={[matClearcoatRoughness]} onValueChange={([v]) => onMatClearcoatRoughnessChange(v)} min={0} max={1} step={0.01} className="w-2/3" />
+                                </div>
+                                <div className="flex items-center justify-between text-xs">
+                                    <label>IOR</label>
+                                    <Slider value={[matIOR]} onValueChange={([v]) => onMatIORChange(v)} min={1} max={2.333} step={0.01} className="w-2/3" />
+                                </div>
+                                <div className="flex items-center justify-between text-xs">
+                                    <label>Transmission</label>
+                                    <Slider value={[matTransmission]} onValueChange={([v]) => onMatTransmissionChange(v)} min={0} max={1} step={0.01} className="w-2/3" />
+                                </div>
+                            </>
+                        )}
+                    </div>
+                </div>
+
+                <Separator className="bg-white/20" />
+
+                {/* Lights (collapsed by default) */}
+                <div className="space-y-3">
+                    <div className="flex items-center justify-between cursor-pointer" onClick={() => setLightsSectionOpen((s) => !s)}>
+                        <h3 className="text-sm font-semibold">Lights</h3>
+                        <div className="flex items-center gap-2">
+                            <Switch checked={lightsEnabled} onCheckedChange={onLightsEnabledChange} />
+                            <span className={`transition-transform ${lightsSectionOpen ? "rotate-180" : ""}`}>⌄</span>
+                        </div>
+                    </div>
+                    {lightsEnabled && lightsSectionOpen && (
                         <>
                             <div className="flex items-center justify-between text-xs">
                                 <label>Presets</label>
                                 <div className="flex items-center gap-2 w-1/2">
                                     <Select value={preset} onValueChange={setPreset}>
-                                        <SelectTrigger className="h-6 text-xs bg-white/10 border-white/30 w-2/3"><SelectValue placeholder="Choose preset" /></SelectTrigger>
-                                        <SelectContent>{p.presets.map((x) => <SelectItem key={x} value={x}>{x}</SelectItem>)}</SelectContent>
+                                        <SelectTrigger className="h-6 text-xs bg-white/10 border-white/30 w-2/3">
+                                            <SelectValue placeholder="Choose preset" />
+                                        </SelectTrigger>
+                                        <SelectContent>{presets.map((x) => <SelectItem key={x} value={x}>{x}</SelectItem>)}</SelectContent>
                                     </Select>
-                                    <Button variant="ghost" size="sm" className="h-6" onClick={() => preset && onApplyPreset(preset)}>Apply</Button>
+                                    <Button variant="ghost" size="sm" className="h-6" onClick={() => preset && onApplyPreset(preset)}>
+                                        Apply
+                                    </Button>
                                 </div>
                             </div>
-                            <Accordion type="single" collapsible className="w-full" value={selectedLightId?.toString()} onValueChange={(v) => onSelectLight(v ? Number(v) : null)}>
+                            <Accordion type="single" collapsible className="w-full" value={selectedLightId !== null ? String(selectedLightId) : ""}>
                                 {lights.map((light, i) => (
-                                    <AccordionItem key={light.id} value={light.id.toString()} className="border-b-white/10">
+                                    <AccordionItem key={light.id} value={String(light.id)} className="border-b-white/10">
                                         <AccordionTrigger className="flex-1 px-3 py-2 text-xs hover:bg-white/5 rounded-t-md" onClick={() => onSelectLight(light.id === selectedLightId ? null : light.id)}>
                                             <div className="flex items-center justify-between w-full">
                                                 <span>Light {i + 1}</span>
                                                 <div className="flex items-center gap-1 pr-3" onClick={(e) => e.stopPropagation()}>
-                                                    <Button variant="ghost" size="icon" className="h-6 w-6" onClick={() => toggleLightVisibility(light.id)}>{light.visible ? <Eye className="h-4 w-4" /> : <EyeOff className="h-4 w-4" />}</Button>
-                                                    <Button variant="ghost" size="icon" className="h-6 w-6" onClick={() => cloneLight(light.id)}><Clone className="h-3 w-3" /></Button>
-                                                    <Button variant="ghost" size="icon" className="h-6 w-6" onClick={() => removeLight(light.id)}><Trash2 className="h-3 w-3" /></Button>
+                                                    <Button variant="ghost" size="icon" className="h-6 w-6" onClick={() => toggleLightVisibility(light.id)}>
+                                                        {light.visible ? <Eye className="h-4 w-4" /> : <EyeOff className="h-4 w-4" />}
+                                                    </Button>
+                                                    <Button variant="ghost" size="icon" className="h-6 w-6" onClick={() => cloneLight(light.id)}>
+                                                        <Clone className="h-3 w-3" />
+                                                    </Button>
+                                                    <Button variant="ghost" size="icon" className="h-6 w-6" onClick={() => removeLight(light.id)}>
+                                                        <Trash2 className="h-3 w-3" />
+                                                    </Button>
                                                 </div>
                                             </div>
                                         </AccordionTrigger>
-                                        <AccordionContent><LightSettings light={light} onLightChange={onLightChange} onFocus={onFocusLight} /></AccordionContent>
+                                        <AccordionContent>
+                                            <LightSettings light={light} onLightChange={onLightChange} onFocus={onFocusLight} />
+                                        </AccordionContent>
                                     </AccordionItem>
                                 ))}
                             </Accordion>
-                            <div className="flex justify-end pt-2"><Button size="icon" className="h-6 w-6" variant="ghost" onClick={addLight} disabled={lights.length >= 5}><Plus className="w-3 h-3" /></Button></div>
+                            <div className="flex justify-end pt-2">
+                                <Button size="icon" className="h-6 w-6" variant="ghost" onClick={addLight} disabled={lights.length >= 5}>
+                                    <Plus className="w-3 h-3" />
+                                </Button>
+                            </div>
                         </>
                     )}
                 </div>
 
                 <Separator className="bg-white/20" />
 
+                {/* Environment */}
                 <div className="space-y-2">
                     <div className="flex items-center justify-between">
                         <h3 className="text-sm font-semibold">Environment</h3>
@@ -881,30 +1498,65 @@ export function SettingsPanel(p: SettingsPanelProps) {
                     </div>
                     {environmentEnabled && (
                         <div className="space-y-2">
-                            <div className="flex items-center justify-between text-xs"><label>Bloom</label><Switch checked={bloomEnabled} onCheckedChange={onBloomEnabledChange} /></div>
+                            <div className="flex items-center justify-between text-xs">
+                                <label>Bloom</label>
+                                <Switch checked={bloomEnabled} onCheckedChange={onBloomEnabledChange} />
+                            </div>
                             <div className="flex items-center justify-between text-xs">
                                 <label>Background</label>
                                 <Select value={bgType} onValueChange={onBgTypeChange as any}>
-                                    <SelectTrigger className="w-1/2 h-6 text-xs bg-white/10 border-white/30"><SelectValue /></SelectTrigger>
-                                    <SelectContent><SelectItem value="color">Color</SelectItem><SelectItem value="gradient">Gradient</SelectItem><SelectItem value="image">Image</SelectItem></SelectContent>
+                                    <SelectTrigger className="w-1/2 h-6 text-xs bg-white/10 border-white/30">
+                                        <SelectValue />
+                                    </SelectTrigger>
+                                    <SelectContent>
+                                        <SelectItem value="color">Color</SelectItem>
+                                        <SelectItem value="gradient">Gradient</SelectItem>
+                                        <SelectItem value="image">Image</SelectItem>
+                                    </SelectContent>
                                 </Select>
                             </div>
-                            {bgType === "color" && (<div className="flex items-center justify-between text-xs"><label>Color</label><input type="color" value={bgColor1} onChange={(e) => onBgColor1Change(e.target.value)} className="w-6 h-6 p-0 bg-transparent border-none" /></div>)}
+                            {bgType === "color" && (
+                                <div className="flex items-center justify-between text-xs">
+                                    <label>Color</label>
+                                    <input type="color" value={bgColor1} onChange={(e) => onBgColor1Change(e.target.value)} className="w-6 h-6 p-0 bg-transparent border-none" />
+                                </div>
+                            )}
                             {bgType === "gradient" && (
                                 <>
-                                    <div className="flex items-center justify-between text-xs"><label>Top Color</label><input type="color" value={bgColor1} onChange={(e) => onBgColor1Change(e.target.value)} className="w-6 h-6 p-0 bg-transparent border-none" /></div>
-                                    <div className="flex items-center justify-between text-xs"><label>Bottom Color</label><input type="color" value={bgColor2} onChange={(e) => onBgColor2Change(e.target.value)} className="w-6 h-6 p-0 bg-transparent border-none" /></div>
+                                    <div className="flex items-center justify-between text-xs">
+                                        <label>Top Color</label>
+                                        <input type="color" value={bgColor1} onChange={(e) => onBgColor1Change(e.target.value)} className="w-6 h-6 p-0 bg-transparent border-none" />
+                                    </div>
+                                    <div className="flex items-center justify-between text-xs">
+                                        <label>Bottom Color</label>
+                                        <input type="color" value={bgColor2} onChange={(e) => onBgColor2Change(e.target.value)} className="w-6 h-6 p-0 bg-transparent border-none" />
+                                    </div>
                                 </>
                             )}
                             {bgType === "image" && (
                                 <div className="flex items-center justify-between text-xs">
                                     <label>Image</label>
-                                    <Button size="icon" className="h-6 w-6" variant="ghost" onClick={() => bgImageInputRef.current?.click()}><Upload className="h-3 w-3" /></Button>
+                                    <Button size="icon" className="h-6 w-6" variant="ghost" onClick={() => bgImageInputRef.current?.click()}>
+                                        <Upload className="h-3 w-3" />
+                                    </Button>
                                     <input type="file" ref={bgImageInputRef} className="hidden" accept="image/*" onChange={handleBgImageUpload} />
                                 </div>
                             )}
                         </div>
                     )}
+                </div>
+
+                {/* View actions */}
+                <div className="flex items-center justify-end gap-2">
+                    <Button variant="ghost" size="icon" className="h-6 w-6" disabled={!model.view_settings} onClick={onDeleteView}>
+                        <Trash2 className="h-3 w-3" />
+                    </Button>
+                    <Button variant="ghost" size="icon" className="h-6 w-6" onClick={onResetView}>
+                        <RotateCcw className="h-4 w-4" />
+                    </Button>
+                    <Button variant="ghost" size="icon" className="h-6 w-6" onClick={onSaveView}>
+                        <Save className="h-3 w-3" />
+                    </Button>
                 </div>
             </div>
         </div>
@@ -1056,8 +1708,7 @@ export function FolderDescriptionDialog({ folder, open, onOpenChange, onSave }: 
 
 === /workspaces/space.iverfinne.no/components/gallery/viewer-components.tsx ===
 
-﻿// components/gallery/viewer-components.tsx
-"use client"
+﻿"use client"
 import { kelvinToRgb } from "@/lib/utils"
 import type { Light } from "@/types"
 import { SpotLight, useGLTF } from "@react-three/drei"
@@ -1070,56 +1721,157 @@ export function Loader() {
 }
 
 const mkWhite = (m: THREE.Material) =>
-    m instanceof THREE.MeshStandardMaterial
-        ? Object.assign(m.clone(), { color: new THREE.Color("white"), map: null })
-        : new THREE.MeshStandardMaterial({ color: "white" })
+    m instanceof THREE.MeshStandardMaterial ? Object.assign(m.clone(), { color: new THREE.Color("white"), map: null }) : new THREE.MeshStandardMaterial({ color: "white" })
 
 const mkNormal = (_: THREE.Material) => new THREE.MeshNormalMaterial()
 
-export const ModelViewer = forwardRef<THREE.Group, { modelUrl: string; materialMode: "pbr" | "normal" | "white" }>(
-    ({ modelUrl, materialMode }, ref) => {
-        const gltf = useGLTF(modelUrl)
-        const scene = useMemo(() => gltf.scene.clone(true), [gltf.scene])
-        const originals = useRef(new Map<string, THREE.Material | THREE.Material[]>()),
-            whites = useRef(new Map<string, THREE.Material | THREE.Material[]>()),
-            normals = useRef(new Map<string, THREE.Material | THREE.Material[]>())
+const mkOverride = (o: {
+    color: string
+    metalness: number
+    roughness: number
+    clearcoat: number
+    clearcoatRoughness: number
+    ior: number
+    transmission: number
+}) => {
+    const mat = new THREE.MeshPhysicalMaterial({
+        color: new THREE.Color(o.color),
+        metalness: o.metalness,
+        roughness: o.roughness,
+        clearcoat: o.clearcoat,
+        clearcoatRoughness: o.clearcoatRoughness,
+        ior: o.ior,
+        transmission: o.transmission,
+    })
+    mat.toneMapped = true
+    mat.envMapIntensity = 1
+    mat.needsUpdate = true
+    return mat
+}
 
-        useEffect(() => {
-            const box = new THREE.Box3().setFromObject(scene), c = new THREE.Vector3()
-            box.getCenter(c); scene.position.sub(c)
-            scene.traverse((ch: any) => {
-                if (!ch?.isMesh) return
-                const mesh = ch as THREE.Mesh
-                mesh.castShadow = mesh.receiveShadow = true
-                const base = mesh.material
-                originals.current.set(mesh.uuid, base)
-                const w = Array.isArray(base) ? base.map(mkWhite) : mkWhite(base)
-                const n = Array.isArray(base) ? base.map(mkNormal) : mkNormal(base)
-                whites.current.set(mesh.uuid, w); normals.current.set(mesh.uuid, n)
-            })
-        }, [scene])
-
-        useEffect(() => {
-            scene.traverse((ch: any) => {
-                if (!ch?.isMesh) return
-                const mesh = ch as THREE.Mesh
-                mesh.material =
-                    materialMode === "white" ? whites.current.get(mesh.uuid)!
-                        : materialMode === "normal" ? normals.current.get(mesh.uuid)!
-                            : originals.current.get(mesh.uuid)!
-            })
-        }, [scene, materialMode])
-
-        return <primitive ref={ref} object={scene} />
+export const ModelViewer = forwardRef<
+    THREE.Group,
+    {
+        modelUrl: string
+        materialMode: "pbr" | "normal" | "white"
+        materialOverride: {
+            enabled: boolean
+            color: string
+            metalness: number
+            roughness: number
+            clearcoat: number
+            clearcoatRoughness: number
+            ior: number
+            transmission: number
+        }
     }
-)
+>(({ modelUrl, materialMode, materialOverride }, ref) => {
+    const gltf = useGLTF(modelUrl)
+    const scene = useMemo(() => gltf.scene.clone(true), [gltf.scene])
+    const originals = useRef(new Map<string, THREE.Material | THREE.Material[]>()),
+        whites = useRef(new Map<string, THREE.Material | THREE.Material[]>()),
+        normals = useRef(new Map<string, THREE.Material | THREE.Material[]>()),
+        overrides = useRef(new Map<string, THREE.Material | THREE.Material[]>())
+
+    useEffect(() => {
+        const box = new THREE.Box3().setFromObject(scene)
+        const center = new THREE.Vector3()
+        box.getCenter(center)
+        const min = box.min.clone()
+        scene.position.x -= center.x
+        scene.position.z -= center.z
+        scene.position.y -= min.y
+        scene.traverse((ch: any) => {
+            if (!ch?.isMesh) return
+            const mesh = ch as THREE.Mesh
+            mesh.castShadow = mesh.receiveShadow = true
+            const base = mesh.material
+            originals.current.set(mesh.uuid, base)
+            const w = Array.isArray(base) ? base.map(mkWhite) : mkWhite(base)
+            const n = Array.isArray(base) ? base.map(mkNormal) : mkNormal(base)
+            whites.current.set(mesh.uuid, w)
+            normals.current.set(mesh.uuid, n)
+        })
+        return () => {
+            ;[whites, normals, overrides].forEach((mapRef) => {
+                mapRef.current.forEach((mat) => {
+                    if (Array.isArray(mat)) mat.forEach((m) => m.dispose())
+                    else mat.dispose()
+                })
+                mapRef.current.clear()
+            })
+        }
+    }, [scene])
+
+    useEffect(() => {
+        if (materialOverride.enabled) return
+        scene.traverse((ch: any) => {
+            if (!ch?.isMesh) return
+            const mesh = ch as THREE.Mesh
+            mesh.material =
+                materialMode === "white" ? whites.current.get(mesh.uuid)!
+                    : materialMode === "normal" ? normals.current.get(mesh.uuid)!
+                        : originals.current.get(mesh.uuid)!
+        })
+    }, [scene, materialMode, materialOverride.enabled])
+
+    useEffect(() => {
+        if (!materialOverride.enabled) return
+        overrides.current.forEach((mat) => {
+            if (Array.isArray(mat)) mat.forEach((m) => m.dispose())
+            else mat.dispose()
+        })
+        overrides.current.clear()
+        scene.traverse((ch: any) => {
+            if (!ch?.isMesh) return
+            const mesh = ch as THREE.Mesh
+            const g = mesh.geometry as THREE.BufferGeometry
+            if (!g.attributes.normal) {
+                g.computeVertexNormals()
+                g.normalizeNormals()
+            }
+            const base = originals.current.get(mesh.uuid)
+            if (Array.isArray(base)) {
+                const ov = base.map(() =>
+                    mkOverride({
+                        color: materialOverride.color,
+                        metalness: materialOverride.metalness,
+                        roughness: materialOverride.roughness,
+                        clearcoat: materialOverride.clearcoat,
+                        clearcoatRoughness: materialOverride.clearcoatRoughness,
+                        ior: materialOverride.ior,
+                        transmission: materialOverride.transmission,
+                    }),
+                )
+                overrides.current.set(mesh.uuid, ov)
+                mesh.material = ov
+            } else {
+                const ov = mkOverride({
+                    color: materialOverride.color,
+                    metalness: materialOverride.metalness,
+                    roughness: materialOverride.roughness,
+                    clearcoat: materialOverride.clearcoat,
+                    clearcoatRoughness: materialOverride.clearcoatRoughness,
+                    ior: materialOverride.ior,
+                    transmission: materialOverride.transmission,
+                })
+                overrides.current.set(mesh.uuid, ov)
+                mesh.material = ov
+            }
+        })
+    }, [scene, materialOverride])
+
+    return <primitive ref={ref} object={scene} />
+})
 ModelViewer.displayName = "ModelViewer"
 
 export function SpotLightInScene({ light }: { light: Light }) {
     const target = useRef(new THREE.Object3D())
     const { r, g, b } = kelvinToRgb(light.kelvin)
     const color = useMemo(() => new THREE.Color(r, g, b), [r, g, b])
-    useEffect(() => { target.current.position.set(...light.targetPosition) }, [light.targetPosition])
+    useEffect(() => {
+        target.current.position.set(...light.targetPosition)
+    }, [light.targetPosition])
     if (!light.visible) return null
     return (
         <>
@@ -1147,40 +1899,66 @@ export const CaptureController = forwardRef<{ capture: () => Promise<File | null
         useImperativeHandle(ref, () => ({
             async capture() {
                 if (!modelRef.current) return null
-                const bg = scene.background; scene.background = null; gl.render(scene, camera)
-
-                const box = new THREE.Box3().setFromObject(modelRef.current), v = new THREE.Vector3()
+                const bg = scene.background
+                scene.background = null
+                gl.render(scene, camera)
+                const box = new THREE.Box3().setFromObject(modelRef.current)
+                const v = new THREE.Vector3()
                 const pts = [
-                    v.set(box.min.x, box.min.y, box.min.z).clone(), v.set(box.min.x, box.min.y, box.max.z).clone(),
-                    v.set(box.min.x, box.max.y, box.min.z).clone(), v.set(box.min.x, box.max.y, box.max.z).clone(),
-                    v.set(box.max.x, box.min.y, box.min.z).clone(), v.set(box.max.x, box.min.y, box.max.z).clone(),
-                    v.set(box.max.x, box.max.y, box.min.z).clone(), v.set(box.max.x, box.max.y, box.max.z).clone(),
+                    v.set(box.min.x, box.min.y, box.min.z).clone(),
+                    v.set(box.min.x, box.min.y, box.max.z).clone(),
+                    v.set(box.min.x, box.max.y, box.min.z).clone(),
+                    v.set(box.min.x, box.max.y, box.max.z).clone(),
+                    v.set(box.max.x, box.min.y, box.min.z).clone(),
+                    v.set(box.max.x, box.min.y, box.max.z).clone(),
+                    v.set(box.max.x, box.max.y, box.min.z).clone(),
+                    v.set(box.max.x, box.max.y, box.max.z).clone(),
                 ]
-                let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity
+                let minX = Infinity,
+                    minY = Infinity,
+                    maxX = -Infinity,
+                    maxY = -Infinity
                 for (const p of pts) {
                     const s = p.clone().project(camera)
-                    const x = ((s.x + 1) / 2) * gl.domElement.width, y = (-(s.y - 1) / 2) * gl.domElement.height
-                    minX = Math.min(minX, x); maxX = Math.max(maxX, x); minY = Math.min(minY, y); maxY = Math.max(maxY, y)
+                    const x = ((s.x + 1) / 2) * gl.domElement.width,
+                        y = (-(s.y - 1) / 2) * gl.domElement.height
+                    minX = Math.min(minX, x)
+                    maxX = Math.max(maxX, x)
+                    minY = Math.min(minY, y)
+                    maxY = Math.max(maxY, y)
                 }
-                const bw = maxX - minX, bh = maxY - minY
-                if (bw <= 0 || bh <= 0) { scene.background = bg; return null }
-                const size = Math.max(bw, bh) * 1.2, cx = minX + bw / 2, cy = minY + bh / 2
-                const sx = cx - size / 2, sy = cy - size / 2
-
-                const tmp = document.createElement("canvas"); tmp.width = 512; tmp.height = 512
-                const ctx = tmp.getContext("2d"); if (!ctx) { scene.background = bg; return null }
+                const bw = maxX - minX,
+                    bh = maxY - minY
+                if (bw <= 0 || bh <= 0) {
+                    scene.background = bg
+                    return null
+                }
+                const size = Math.max(bw, bh) * 1.2,
+                    cx = minX + bw / 2,
+                    cy = minY + bh / 2
+                const sx = cx - size / 2,
+                    sy = cy - size / 2
+                const tmp = document.createElement("canvas")
+                tmp.width = 512
+                tmp.height = 512
+                const ctx = tmp.getContext("2d")
+                if (!ctx) {
+                    scene.background = bg
+                    return null
+                }
                 ctx.drawImage(gl.domElement, sx, sy, size, size, 0, 0, 512, 512)
                 scene.background = bg
-
                 const b64 = tmp.toDataURL("image/png")
                 const [meta, data] = b64.split(",")
                 const mime = meta.match(/:(.*?);/)?.[1] ?? "image/png"
-                const bin = atob(data), buf = new Uint8Array(bin.length); for (let i = 0; i < bin.length; i++) buf[i] = bin.charCodeAt(i)
+                const bin = atob(data),
+                    buf = new Uint8Array(bin.length)
+                for (let i = 0; i < bin.length; i++) buf[i] = bin.charCodeAt(i)
                 return new File([buf], `thumbnail-${Date.now()}.png`, { type: mime })
             },
         }))
         return null
-    }
+    },
 )
 CaptureController.displayName = "CaptureController"
 
@@ -1292,15 +2070,16 @@ export function useIsMobile() {
 
 ﻿"use client"
 
+import { lightingPresets } from "@/lib/lighting-presets"
 import type { Light, Model, ViewSettings } from "@/types"
-import { useCallback, useState } from "react"
-
-const defaultLights: Light[] = [
-    { id: Date.now(), visible: true, position: [-2, 3, 2], targetPosition: [0, 0, 0], intensity: 3, kelvin: 5500, decay: 1, angle: 45, penumbra: 0.5 },
-    { id: Date.now() + 1, visible: true, position: [2, 2, -1], targetPosition: [0, 0, 0], intensity: 2, kelvin: 4000, decay: 1, angle: 60, penumbra: 0.3 },
-]
+import { useCallback, useMemo, useState } from "react"
 
 export function useViewerState(_selectedModel: Model | undefined) {
+    const defaultLights: Light[] = useMemo(() => {
+        const preset = lightingPresets.find((p) => p.name === "3-Point")?.lights ?? []
+        return preset.map((l, i) => ({ ...l, id: Date.now() + i, visible: true }))
+    }, [])
+
     const [materialMode, setMaterialMode] = useState<"pbr" | "normal" | "white">("white")
     const [lightsEnabled, onLightsEnabledChange] = useState(true)
     const [environmentEnabled, onEnvironmentEnabledChange] = useState(false)
@@ -1311,34 +2090,44 @@ export function useViewerState(_selectedModel: Model | undefined) {
     const [bgImage, onBgImageChange] = useState<string | null>(null)
     const [lights, setLights] = useState<Light[]>(defaultLights)
     const [selectedLightId, setSelectedLightId] = useState<number | null>(null)
-    const [fieldOfView, onFieldOfViewChange] = useState(50)
 
-    const resetViewSettings = useCallback((s: ViewSettings | null | undefined) => {
-        setLights(s?.lights?.map((l, i) => ({ ...l, id: Date.now() + i, visible: true })) ?? defaultLights)
-        onLightsEnabledChange(s?.lightsEnabled ?? true)
-        onEnvironmentEnabledChange(s?.environmentEnabled ?? false)
-        onBloomEnabledChange(s?.bloomEnabled ?? false)
-        onBgTypeChange(s?.bgType ?? "color")
-        onBgColor1Change(s?.bgColor1 ?? "#000000")
-        onBgColor2Change(s?.bgColor2 ?? "#1a1a1a")
-        onBgImageChange(s?.bgImage ?? null)
-        onFieldOfViewChange(s?.fieldOfView ?? 50)
-        setMaterialMode(s?.materialMode ?? "white")
-        setSelectedLightId(null)
-    }, [])
+    const resetViewSettings = useCallback(
+        (s: ViewSettings | null | undefined) => {
+            setLights(s?.lights?.map((l, i) => ({ ...l, id: Date.now() + i, visible: true })) ?? defaultLights)
+            onLightsEnabledChange(s?.lightsEnabled ?? true)
+            onEnvironmentEnabledChange(s?.environmentEnabled ?? false)
+            onBloomEnabledChange(s?.bloomEnabled ?? false)
+            onBgTypeChange(s?.bgType ?? "color")
+            onBgColor1Change(s?.bgColor1 ?? "#000000")
+            onBgColor2Change(s?.bgColor2 ?? "#1a1a1a")
+            onBgImageChange(s?.bgImage ?? null)
+            setMaterialMode(s?.materialMode ?? "white")
+            setSelectedLightId(null)
+        },
+        [defaultLights],
+    )
 
     return {
-        materialMode, setMaterialMode,
-        lightsEnabled, onLightsEnabledChange,
-        environmentEnabled, onEnvironmentEnabledChange,
-        bloomEnabled, onBloomEnabledChange,
-        bgType, onBgTypeChange,
-        bgColor1, onBgColor1Change,
-        bgColor2, onBgColor2Change,
-        bgImage, onBgImageChange,
-        lights, setLights,
-        selectedLightId, setSelectedLightId,
-        fieldOfView, onFieldOfViewChange,
+        materialMode,
+        setMaterialMode,
+        lightsEnabled,
+        onLightsEnabledChange,
+        environmentEnabled,
+        onEnvironmentEnabledChange,
+        bloomEnabled,
+        onBloomEnabledChange,
+        bgType,
+        onBgTypeChange,
+        bgColor1,
+        onBgColor1Change,
+        bgColor2,
+        onBgColor2Change,
+        bgImage,
+        onBgImageChange,
+        lights,
+        setLights,
+        selectedLightId,
+        setSelectedLightId,
         resetViewSettings,
     }
 }
@@ -1570,6 +2359,7 @@ export async function deleteViewSettings(modelId: string) {
 
 === /workspaces/space.iverfinne.no/lib/lighting-presets.ts ===
 
+// === /workspaces/space.iverfinne.no/lib/lighting-presets.ts ===
 import type { Light } from "@/types";
 
 type LightPreset = Omit<Light, "id" | "visible">
@@ -1578,7 +2368,8 @@ export const lightingPresets: { name: string; lights: LightPreset[] }[] = [
   {
     name: "3-Point",
     lights: [
-      { position: [-2.5, 2.2, 3.2], targetPosition: [0, 0.6, 0], intensity: 22, kelvin: 5600, decay: 1.6, angle: 38, penumbra: 0.4 },
+      // Increased key light intensity for stronger default
+      { position: [-2.5, 2.2, 3.2], targetPosition: [0, 0.6, 0], intensity: 28, kelvin: 5600, decay: 1.6, angle: 38, penumbra: 0.4 },
       { position: [2.8, 1.2, 2.2], targetPosition: [0, 0.6, 0], intensity: 8, kelvin: 4200, decay: 2.0, angle: 55, penumbra: 0.7 },
       { position: [0.0, 2.0, -2.4], targetPosition: [0, 0.4, 0], intensity: 18, kelvin: 7000, decay: 1.8, angle: 50, penumbra: 0.5 },
     ],
@@ -1704,10 +2495,22 @@ export interface ViewSettings {
   bgColor1: string
   bgColor2: string
   bgImage: string | null
-  fieldOfView: number
+  /** kept for backward compatibility, not used */
+  fieldOfView?: number
   cameraPosition: [number, number, number] | null
   cameraTarget: [number, number, number] | null
   materialMode: "pbr" | "normal" | "white"
+  /** Material override (clay/physical) */
+  materialOverride?: {
+    enabled: boolean
+    color: string
+    metalness: number
+    roughness: number
+    clearcoat: number
+    clearcoatRoughness: number
+    ior: number
+    transmission: number
+  }
 }
 
 export interface Model {

@@ -1,5 +1,4 @@
-﻿// === /workspaces/space.iverfinne.no/components/gallery/viewer-components.tsx ===
-"use client"
+﻿"use client"
 import { kelvinToRgb } from "@/lib/utils"
 import type { Light } from "@/types"
 import { SpotLight, useGLTF } from "@react-three/drei"
@@ -65,10 +64,13 @@ export const ModelViewer = forwardRef<
         overrides = useRef(new Map<string, THREE.Material | THREE.Material[]>())
 
     useEffect(() => {
-        const box = new THREE.Box3().setFromObject(scene),
-            c = new THREE.Vector3()
-        box.getCenter(c)
-        scene.position.sub(c)
+        const box = new THREE.Box3().setFromObject(scene)
+        const center = new THREE.Vector3()
+        box.getCenter(center)
+        const min = box.min.clone()
+        scene.position.x -= center.x
+        scene.position.z -= center.z
+        scene.position.y -= min.y
         scene.traverse((ch: any) => {
             if (!ch?.isMesh) return
             const mesh = ch as THREE.Mesh
@@ -91,7 +93,6 @@ export const ModelViewer = forwardRef<
         }
     }, [scene])
 
-    // Mode (only when override disabled)
     useEffect(() => {
         if (materialOverride.enabled) return
         scene.traverse((ch: any) => {
@@ -104,7 +105,6 @@ export const ModelViewer = forwardRef<
         })
     }, [scene, materialMode, materialOverride.enabled])
 
-    // Override (clay/physical) — ensure proper lighting (compute normals if missing)
     useEffect(() => {
         if (!materialOverride.enabled) return
         overrides.current.forEach((mat) => {
@@ -112,7 +112,6 @@ export const ModelViewer = forwardRef<
             else mat.dispose()
         })
         overrides.current.clear()
-
         scene.traverse((ch: any) => {
             if (!ch?.isMesh) return
             const mesh = ch as THREE.Mesh
@@ -193,9 +192,8 @@ export const CaptureController = forwardRef<{ capture: () => Promise<File | null
                 const bg = scene.background
                 scene.background = null
                 gl.render(scene, camera)
-
-                const box = new THREE.Box3().setFromObject(modelRef.current),
-                    v = new THREE.Vector3()
+                const box = new THREE.Box3().setFromObject(modelRef.current)
+                const v = new THREE.Vector3()
                 const pts = [
                     v.set(box.min.x, box.min.y, box.min.z).clone(),
                     v.set(box.min.x, box.min.y, box.max.z).clone(),
@@ -230,7 +228,6 @@ export const CaptureController = forwardRef<{ capture: () => Promise<File | null
                     cy = minY + bh / 2
                 const sx = cx - size / 2,
                     sy = cy - size / 2
-
                 const tmp = document.createElement("canvas")
                 tmp.width = 512
                 tmp.height = 512
@@ -241,7 +238,6 @@ export const CaptureController = forwardRef<{ capture: () => Promise<File | null
                 }
                 ctx.drawImage(gl.domElement, sx, sy, size, size, 0, 0, 512, 512)
                 scene.background = bg
-
                 const b64 = tmp.toDataURL("image/png")
                 const [meta, data] = b64.split(",")
                 const mime = meta.match(/:(.*?);/)?.[1] ?? "image/png"
