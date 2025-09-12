@@ -69,9 +69,6 @@ export default function GalleryPage() {
   const { data: breadcrumbData } = useSWR<{ id: string; name: string }[]>(currentFolderId ? `/api/folders/${currentFolderId}/breadcrumbs` : null, fetcher)
 
   useEffect(() => {
-    // This effect adds meta tags for a better Progressive Web App (PWA) experience on iOS.
-    // When saved to the home screen, the app will open in full-screen mode.
-    // Ideally, these tags should be in the root layout file (e.g., layout.tsx).
     if (document.querySelector('meta[name="apple-mobile-web-app-capable"]')) return
 
     const metaTags = [
@@ -123,7 +120,7 @@ export default function GalleryPage() {
 
   const folderById = useMemo(() => {
     const map = new Map<string, Folder>()
-    ;(allFolders ?? []).forEach((f) => map.set(f.id, f))
+      ; (allFolders ?? []).forEach((f) => map.set(f.id, f))
     return map
   }, [allFolders])
 
@@ -259,14 +256,9 @@ export default function GalleryPage() {
   }, [selectedModel, resetViewSettings])
 
   useEffect(() => {
-    // This effect runs when a new model is selected. It sets up the default camera view.
     if (modelRef.current && orbitControlsRef.current && selectedModel) {
-      // The ModelViewer component already centers and grounds the model.
-      // We just need to ensure the ground plane is in the right spot.
       setGroundY(-0.001)
 
-      // Check if there isn't a pre-saved camera position for this model.
-      // If not, we calculate and set a nice default 3/4 view.
       if (!selectedModel.view_settings?.cameraPosition) {
         const box = new THREE.Box3().setFromObject(modelRef.current)
         const size = box.getSize(new THREE.Vector3())
@@ -274,20 +266,14 @@ export default function GalleryPage() {
         const maxDim = Math.max(size.x, size.y, size.z)
         const camera = orbitControlsRef.current.object
 
-        // Position camera at a 3/4 angle based on the model's dimensions.
-        // The distance is scaled by the largest dimension to provide a reasonable starting point.
         camera.position.set(center.x + maxDim, center.y + maxDim, center.z + maxDim)
 
-        // Aim the camera and controls at the model's center.
         orbitControlsRef.current.target.copy(center)
         orbitControlsRef.current.update()
       }
 
-      // Finally, trigger the <Bounds> component to fit the view to the model
-      // using the new (or saved) camera orientation.
       setBoundsKey((k) => k + 1)
     }
-    // This effect should re-run whenever the selectedModel object changes.
   }, [selectedModel])
 
   const updateQuery = (params: Record<string, string | null>) => {
@@ -379,7 +365,7 @@ export default function GalleryPage() {
               folder_id: currentFolderId
             })
           })
-        } catch {}
+        } catch { }
       })
     )
     mutate(galleryUrl)
@@ -404,12 +390,12 @@ export default function GalleryPage() {
   }
 
   const handleBulkDelete = async () => {
-    await bulkAct(Array.from(selectedItems), (id) => fetch(`/api/models/${id}`, { method: "DELETE" }).then(() => {}))
+    await bulkAct(Array.from(selectedItems), (id) => fetch(`/api/models/${id}`, { method: "DELETE" }).then(() => { }))
     if (Array.from(selectedItems).includes(modelId || "")) handleCloseViewer()
     setSelectedItems(new Set())
   }
 
-  const handleBulkMove = async (_targetFolderId: string | null) => {}
+  const handleBulkMove = async (_targetFolderId: string | null) => { }
 
   const handleBulkSetPublic = async (isPublic: boolean) => {
     await bulkAct(Array.from(selectedItems), (id) =>
@@ -417,7 +403,7 @@ export default function GalleryPage() {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ is_public: isPublic })
-      }).then(() => {})
+      }).then(() => { })
     )
     if (Array.from(selectedItems).includes(modelId || "")) mutateSelectedModel()
     setSelectedItems(new Set())
@@ -485,10 +471,10 @@ export default function GalleryPage() {
   }
 
   const randomizeAllPartial = () => ({
-    intensity: 10 + Math.random() * 40, // Range: 10 to 50 (2x brighter)
-    kelvin: 1500 + Math.random() * 10500, // Range: 1500K to 12000K (more dynamic color)
-    angle: 10 + Math.random() * 80, // Range: 10 to 90 degrees (more dynamic cone)
-    penumbra: Math.random() // Range: 0 to 1 (more dynamic edge softness)
+    intensity: 10 + Math.random() * 40,
+    kelvin: 1500 + Math.random() * 10500,
+    angle: 10 + Math.random() * 80,
+    penumbra: Math.random()
   })
   const handleLightChange = (id: number, v: Partial<Omit<Light, "id">>) => setLights((ls) => ls.map((l) => (l.id === id ? { ...l, ...v } : l)))
   const addLight = () => {
@@ -550,10 +536,10 @@ export default function GalleryPage() {
       }
       if (k === "t") {
         e.preventDefault()
-        ;(async () => {
-          await handleSaveViewSettings()
-          await handleCaptureThumbnail()
-        })()
+          ; (async () => {
+            await handleSaveViewSettings()
+            await handleCaptureThumbnail()
+          })()
       }
       if (k === "r") {
         e.preventDefault()
@@ -580,7 +566,7 @@ export default function GalleryPage() {
       e.stopPropagation()
       setIsLightDragging(true)
       setIsOrbitControlsEnabled(false)
-      ;(e.target as HTMLElement).style.cursor = "grabbing"
+        ; (e.target as HTMLElement).style.cursor = "grabbing"
     }
   }
   const onPointerMove = (e: React.PointerEvent<HTMLDivElement>) => {
@@ -615,7 +601,6 @@ export default function GalleryPage() {
   const [renameItem, setRenameItem] = useState<Model | null>(null)
   const [editingFolder, setEditingFolder] = useState<Folder | null>(null)
 
-  // MOVED HOOKS AND FUNCTIONS BEFORE EARLY RETURN
   const activeFilterCount = useMemo(() => {
     let n = 0
     if (filterVisibility !== "all") n++
@@ -647,7 +632,7 @@ export default function GalleryPage() {
             gl.toneMappingExposure = 1
             gl.shadowMap.enabled = true
             gl.shadowMap.type = THREE.PCFSoftShadowMap
-            ;(gl as any).physicallyCorrectLights = true
+              ; (gl as any).physicallyCorrectLights = true
           }}
           onPointerMissed={(e) => e.button === 0 && setSelectedLightId(null)}
           onPointerDown={onPointerDown}
@@ -800,7 +785,7 @@ export default function GalleryPage() {
   }
 
   return (
-    <div className="min-h-screen bg-black text-white relative">
+    <div className="h-screen bg-black text-white relative flex flex-col">
       <div className="flex items-center justify-between px-4 md:px-8 py-4">
         <div className="text-sm text-white/70">
           {breadcrumbs.map((c, i) => (
@@ -837,7 +822,7 @@ export default function GalleryPage() {
                   <DropdownMenuCheckboxItem
                     key={f.id}
                     checked={filterFolderIds.has(f.id)}
-                    onSelect={(e) => e.preventDefault()} // Prevent menu from closing on click
+                    onSelect={(e) => e.preventDefault()}
                     onCheckedChange={(checked) => {
                       const newSet = new Set(filterFolderIds)
                       if (checked) {
@@ -945,7 +930,7 @@ export default function GalleryPage() {
       </div>
 
       <main
-        className="relative px-4 md:px-8 pb-24"
+        className="relative flex-1 overflow-y-auto px-4 md:px-8 pb-24"
         onClick={() => setSelectedItems(new Set())}
         onDrop={(e) => {
           e.preventDefault()
@@ -999,7 +984,7 @@ export default function GalleryPage() {
                       alt={item.name}
                       className="w-full h-full object-contain transition-transform duration-300 group-hover:scale-110"
                       onError={(e) => {
-                        ;(e.target as HTMLImageElement).src = `/placeholder.svg?width=400&height=400&query=error`
+                        ; (e.target as HTMLImageElement).src = `/placeholder.svg?width=400&height=400&query=error`
                       }}
                     />
                     <div className="absolute inset-0 bg-black/60 opacity-0 group-hover:opacity-100 transition-opacity duration-300 flex items-end p-2">
