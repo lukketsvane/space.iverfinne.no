@@ -8,9 +8,7 @@ export interface Light {
   decay: number
   angle: number
   penumbra: number
-  /** legacy, ignored by the new renderer */
   volumeOpacity?: number
-  /** physically-correct falloff distance (0 = infinite) */
   distance?: number
 }
 
@@ -24,12 +22,11 @@ export interface ViewSettings {
   bgColor1: string
   bgColor2: string
   bgImage: string | null
-  /** kept for backward compatibility, not used */
-  fieldOfView?: number
+  fov: number
+  orthographic: boolean
   cameraPosition: [number, number, number] | null
   cameraTarget: [number, number, number] | null
   materialMode: "pbr" | "normal" | "white"
-  /** Material override (clay/physical) */
   materialOverride?: {
     enabled: boolean
     color: string

@@ -23,7 +23,7 @@ import { useIsMobile } from "@/hooks/use-mobile"
 import { lightingPresets } from "@/lib/lighting-presets"
 import { cn } from "@/lib/utils"
 import type { Folder, GalleryItem, Light, Model, ViewSettings } from "@/types"
-import { Bounds, OrbitControls, useGLTF } from "@react-three/drei"
+import { Bounds, GizmoHelper, GizmoViewport, OrbitControls, OrthographicCamera, PerspectiveCamera, useGLTF } from "@react-three/drei"
 import { Canvas } from "@react-three/fiber"
 import { Bloom, EffectComposer } from "@react-three/postprocessing"
 import { upload } from "@vercel/blob/client"
@@ -197,6 +197,11 @@ export default function GalleryPage() {
   const [lights, setLights] = useState<Light[]>([])
   const [selectedLightId, setSelectedLightId] = useState<number | null>(null)
 
+  const [fov, setFov] = useState(50)
+  const [isOrthographic, setIsOrthographic] = useState(false)
+  const [cameraPosition, setCameraPosition] = useState<[number, number, number]>([5, 5, 5])
+  const [cameraTarget, setCameraTarget] = useState<[number, number, number]>([0, 0, 0])
+
   const [matOverrideEnabled, setMatOverrideEnabled] = useState(false)
   const [matBaseColor, setMatBaseColor] = useState<string>("#e5e5e5")
   const [matMetalness, setMatMetalness] = useState<number>(0)
@@ -232,6 +237,8 @@ export default function GalleryPage() {
       setBgColor2(s?.bgColor2 ?? "#1a1a1a")
       setBgImage(s?.bgImage ?? null)
       setMaterialMode(s?.materialMode ?? "white")
+      setFov(s?.fov ?? 50)
+      setIsOrthographic(s?.orthographic ?? false)
       setMatOverrideEnabled(!!s?.materialOverride?.enabled)
       setMatBaseColor(s?.materialOverride?.color ?? "#e5e5e5")
       setMatMetalness(s?.materialOverride?.metalness ?? 0)
@@ -248,15 +255,12 @@ export default function GalleryPage() {
   useEffect(() => {
     if (!selectedModel) return
     resetViewSettings(selectedModel.view_settings)
-    if (orbitControlsRef.current && selectedModel.view_settings?.cameraPosition) {
-      orbitControlsRef.current.object.position.set(...selectedModel.view_settings.cameraPosition)
-      orbitControlsRef.current.target.set(...(selectedModel.view_settings.cameraTarget ?? [0, 0, 0]))
-      orbitControlsRef.current.update()
-    }
+    setCameraPosition(selectedModel.view_settings?.cameraPosition || [5, 5, 5])
+    setCameraTarget(selectedModel.view_settings?.cameraTarget || [0, 0, 0])
   }, [selectedModel, resetViewSettings])
 
   useEffect(() => {
-    if (modelRef.current && orbitControlsRef.current && selectedModel) {
+    if (modelRef.current && selectedModel) {
       setGroundY(-0.001)
 
       if (!selectedModel.view_settings?.cameraPosition) {
@@ -264,14 +268,13 @@ export default function GalleryPage() {
         const size = box.getSize(new THREE.Vector3())
         const center = box.getCenter(new THREE.Vector3())
         const maxDim = Math.max(size.x, size.y, size.z)
-        const camera = orbitControlsRef.current.object
 
-        camera.position.set(center.x + maxDim, center.y + maxDim, center.z + maxDim)
+        const newPos: [number, number, number] = [center.x + maxDim, center.y + maxDim, center.z + maxDim]
+        const newTgt: [number, number, number] = [center.x, center.y, center.z]
 
-        orbitControlsRef.current.target.copy(center)
-        orbitControlsRef.current.update()
+        setCameraPosition(newPos)
+        setCameraTarget(newTgt)
       }
-
       setBoundsKey((k) => k + 1)
     }
   }, [selectedModel])
@@ -410,7 +413,7 @@ export default function GalleryPage() {
   }
 
   const handleSaveViewSettings = useCallback(async () => {
-    if (!selectedModel || !orbitControlsRef.current) return
+    if (!selectedModel) return
     const settings: ViewSettings = {
       lights: lights.map(({ id, visible, ...rest }) => rest),
       lightsEnabled,
@@ -421,8 +424,10 @@ export default function GalleryPage() {
       bgColor1,
       bgColor2,
       bgImage,
-      cameraPosition: orbitControlsRef.current.object.position.toArray() as [number, number, number],
-      cameraTarget: orbitControlsRef.current.target.toArray() as [number, number, number],
+      fov,
+      orthographic: isOrthographic,
+      cameraPosition,
+      cameraTarget,
       materialMode,
       materialOverride: {
         enabled: matOverrideEnabled,
@@ -446,6 +451,10 @@ export default function GalleryPage() {
     bgColor1,
     bgColor2,
     bgImage,
+    fov,
+    isOrthographic,
+    cameraPosition,
+    cameraTarget,
     materialMode,
     matOverrideEnabled,
     matBaseColor,
@@ -528,6 +537,10 @@ export default function GalleryPage() {
       if (k === "1") setMaterialMode("white")
       if (k === "2") setMaterialMode("pbr")
       if (k === "3") setMaterialMode("normal")
+      if (k === "o") {
+        e.preventDefault()
+        setIsOrthographic((prev) => !prev)
+      }
       if (k === "e") {
         e.preventDefault()
         setEnvironmentEnabled(true)
@@ -641,6 +654,11 @@ export default function GalleryPage() {
           onPointerLeave={onPointerUp}
           frameloop={isLightDragging ? "always" : "demand"}
         >
+          {isOrthographic ? (
+            <OrthographicCamera makeDefault position={cameraPosition} zoom={50} />
+          ) : (
+            <PerspectiveCamera makeDefault fov={fov} position={cameraPosition} />
+          )}
           <Suspense fallback={null}>
             {groundEnabled && (
               <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, groundY, 0]} receiveShadow>
@@ -673,7 +691,20 @@ export default function GalleryPage() {
             )}
             <CaptureController ref={captureControllerRef} modelRef={modelRef} />
           </Suspense>
-          <OrbitControls ref={orbitControlsRef} enabled={isOrbitControlsEnabled} makeDefault />
+          <OrbitControls
+            ref={orbitControlsRef}
+            enabled={isOrbitControlsEnabled}
+            target={cameraTarget}
+            onChange={(e) => {
+              if (e?.target) {
+                setCameraPosition(e.target.object.position.toArray())
+                setCameraTarget(e.target.target.toArray())
+              }
+            }}
+          />
+          <GizmoHelper alignment="bottom-right" margin={[80, 80]} key={isOrthographic ? "ortho" : "persp"}>
+            <GizmoViewport axisColors={["#9d4b4b", "#2f7f4f", "#3b5b9d"]} labelColor="white" />
+          </GizmoHelper>
           <ambientLight intensity={0.1} />
         </Canvas>
 
@@ -729,6 +760,10 @@ export default function GalleryPage() {
               onBgImageChange={setBgImage}
               materialMode={materialMode}
               onMaterialModeChange={setMaterialMode}
+              fov={fov}
+              onFovChange={setFov}
+              isOrthographic={isOrthographic}
+              onIsOrthographicChange={setIsOrthographic}
               matOverrideEnabled={matOverrideEnabled}
               onMatOverrideEnabledChange={setMatOverrideEnabled}
               matBaseColor={matBaseColor}

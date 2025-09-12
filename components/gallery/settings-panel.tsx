@@ -1,5 +1,4 @@
-﻿// === /workspaces/space.iverfinne.no/components/gallery/settings-panel.tsx ===
-"use client"
+﻿"use client"
 
 import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from "@/components/ui/accordion"
 import { Button } from "@/components/ui/button"
@@ -18,7 +17,7 @@ function EditableValue({
     onSave,
     units = "",
     className,
-    inputClassName,
+    inputClassName
 }: {
     value: string | number
     onSave: (newValue: string) => void
@@ -78,9 +77,9 @@ function DirectionalPad({ value, onChange }: { value: { x: number; z: number }; 
                     z = (z / d) * half
                 }
                 onChange({ x: (x / half) * 5, z: (z / half) * 5 })
-            },
+            }
         },
-        { drag: { filterTaps: true } },
+        { drag: { filterTaps: true } }
     )
     const handleX = (value.x / 5) * 50,
         handleZ = (value.z / 5) * 50
@@ -148,7 +147,6 @@ export interface SettingsPanelProps {
     onThumbnailUpload: (file: File) => void
     onCaptureThumbnail: () => void
     onDeleteThumbnail: () => void
-    // lights
     lights: Light[]
     onLightChange: (id: number, newValues: Partial<Omit<Light, "id">>) => void
     addLight: () => void
@@ -160,7 +158,6 @@ export interface SettingsPanelProps {
     onFocusLight: (id: number) => void
     lightsEnabled: boolean
     onLightsEnabledChange: (enabled: boolean) => void
-    // environment
     environmentEnabled: boolean
     onEnvironmentEnabledChange: (enabled: boolean) => void
     bloomEnabled: boolean
@@ -173,9 +170,12 @@ export interface SettingsPanelProps {
     onBgColor2Change: (value: string) => void
     bgImage: string | null
     onBgImageChange: (value: string | null) => void
-    // materials
     materialMode: "pbr" | "normal" | "white"
     onMaterialModeChange: (m: "pbr" | "normal" | "white") => void
+    fov: number
+    onFovChange: (v: number) => void
+    isOrthographic: boolean
+    onIsOrthographicChange: (v: boolean) => void
     matOverrideEnabled: boolean
     onMatOverrideEnabledChange: (v: boolean) => void
     matBaseColor: string
@@ -192,11 +192,9 @@ export interface SettingsPanelProps {
     onMatIORChange: (v: number) => void
     matTransmission: number
     onMatTransmissionChange: (v: number) => void
-    // view
     onSaveView: () => void
     onDeleteView: () => void
     onResetView: () => void
-    // presets
     onApplyPreset: (name: string) => void
     presets: string[]
 }
@@ -209,7 +207,6 @@ export function SettingsPanel(p: SettingsPanelProps) {
         onThumbnailUpload,
         onCaptureThumbnail,
         onDeleteThumbnail,
-        // lights
         lights,
         onLightChange,
         addLight,
@@ -221,7 +218,6 @@ export function SettingsPanel(p: SettingsPanelProps) {
         onFocusLight,
         lightsEnabled,
         onLightsEnabledChange,
-        // env
         environmentEnabled,
         onEnvironmentEnabledChange,
         bloomEnabled,
@@ -234,9 +230,12 @@ export function SettingsPanel(p: SettingsPanelProps) {
         onBgColor2Change,
         bgImage,
         onBgImageChange,
-        // materials
         materialMode,
         onMaterialModeChange,
+        fov,
+        onFovChange,
+        isOrthographic,
+        onIsOrthographicChange,
         matOverrideEnabled,
         onMatOverrideEnabledChange,
         matBaseColor,
@@ -253,20 +252,16 @@ export function SettingsPanel(p: SettingsPanelProps) {
         onMatIORChange,
         matTransmission,
         onMatTransmissionChange,
-        // view
         onSaveView,
         onDeleteView,
         onResetView,
-        // presets
         onApplyPreset,
-        presets,
+        presets
     } = p
 
     const [preset, setPreset] = useState<string>(presets[0] ?? "")
     const thumbnailInputRef = useRef<HTMLInputElement>(null)
     const bgImageInputRef = useRef<HTMLInputElement>(null)
-
-    // collapsed-by-default Lights section
     const [lightsSectionOpen, setLightsSectionOpen] = useState(false)
 
     const handleBgImageUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -280,7 +275,6 @@ export function SettingsPanel(p: SettingsPanelProps) {
     return (
         <div className="px-4 pb-4 flex flex-col h-full text-white overflow-y-auto">
             <div className="space-y-4 flex-1 overflow-y-auto pr-2 -mr-2">
-                {/* Model controls */}
                 <div className="space-y-2">
                     <div className="flex items-center justify-between text-xs">
                         <label>Name</label>
@@ -320,7 +314,24 @@ export function SettingsPanel(p: SettingsPanelProps) {
 
                 <Separator className="bg-white/20" />
 
-                {/* Materials */}
+                <div className="space-y-3">
+                    <h3 className="text-sm font-semibold">Camera</h3>
+                    <div className="space-y-2 bg-white/5 p-3 rounded-md">
+                        <div className="flex items-center justify-between text-xs">
+                            <label>Orthographic</label>
+                            <Switch checked={isOrthographic} onCheckedChange={onIsOrthographicChange} />
+                        </div>
+                        {!isOrthographic && (
+                            <div className="flex items-center justify-between text-xs">
+                                <label>Field of View</label>
+                                <Slider value={[fov]} onValueChange={([v]) => onFovChange(v)} min={10} max={120} step={1} className="w-2/3" />
+                            </div>
+                        )}
+                    </div>
+                </div>
+
+                <Separator className="bg-white/20" />
+
                 <div className="space-y-3">
                     <div className="flex items-center justify-between">
                         <h3 className="text-sm font-semibold">Material</h3>
@@ -381,7 +392,6 @@ export function SettingsPanel(p: SettingsPanelProps) {
 
                 <Separator className="bg-white/20" />
 
-                {/* Lights (collapsed by default) */}
                 <div className="space-y-3">
                     <div className="flex items-center justify-between cursor-pointer" onClick={() => setLightsSectionOpen((s) => !s)}>
                         <h3 className="text-sm font-semibold">Lights</h3>
@@ -442,7 +452,6 @@ export function SettingsPanel(p: SettingsPanelProps) {
 
                 <Separator className="bg-white/20" />
 
-                {/* Environment */}
                 <div className="space-y-2">
                     <div className="flex items-center justify-between">
                         <h3 className="text-sm font-semibold">Environment</h3>
@@ -498,7 +507,6 @@ export function SettingsPanel(p: SettingsPanelProps) {
                     )}
                 </div>
 
-                {/* View actions */}
                 <div className="flex items-center justify-end gap-2">
                     <Button variant="ghost" size="icon" className="h-6 w-6" disabled={!model.view_settings} onClick={onDeleteView}>
                         <Trash2 className="h-3 w-3" />
