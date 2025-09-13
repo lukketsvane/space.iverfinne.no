@@ -216,6 +216,7 @@ export default function GalleryPage() {
   const [matClearcoatRough, setMatClearcoatRough] = useState<number>(0.6)
   const [matIOR, setMatIOR] = useState<number>(1.5)
   const [matTransmission, setMatTransmission] = useState<number>(0)
+  const [matUseAlbedo, setMatUseAlbedo] = useState<boolean>(true)
 
   const [isOrbitControlsEnabled, setIsOrbitControlsEnabled] = useState(true)
   const modelRef = useRef<THREE.Group>(null)
@@ -253,6 +254,7 @@ export default function GalleryPage() {
       setMatClearcoatRough(s?.materialOverride?.clearcoatRoughness ?? 0.6)
       setMatIOR(s?.materialOverride?.ior ?? 1.5)
       setMatTransmission(s?.materialOverride?.transmission ?? 0)
+      setMatUseAlbedo(s?.materialOverride?.useAlbedo ?? true)
       setSelectedLightId(null)
     },
     [defaultLights]
@@ -443,7 +445,8 @@ export default function GalleryPage() {
         clearcoat: matClearcoat,
         clearcoatRoughness: matClearcoatRough,
         ior: matIOR,
-        transmission: matTransmission
+        transmission: matTransmission,
+        useAlbedo: matUseAlbedo
       }
     }
     await handleModelUpdate(selectedModel.id, { view_settings: settings })
@@ -470,6 +473,7 @@ export default function GalleryPage() {
     matClearcoatRough,
     matIOR,
     matTransmission,
+    matUseAlbedo,
     handleModelUpdate
   ])
 
@@ -692,7 +696,8 @@ export default function GalleryPage() {
                   clearcoat: matClearcoat,
                   clearcoatRoughness: matClearcoatRough,
                   ior: matIOR,
-                  transmission: matTransmission
+                  transmission: matTransmission,
+                  useAlbedo: matUseAlbedo
                 }}
               />
             </Bounds>
@@ -799,6 +804,8 @@ export default function GalleryPage() {
             onMatIORChange={setMatIOR}
             matTransmission={matTransmission}
             onMatTransmissionChange={setMatTransmission}
+            matUseAlbedo={matUseAlbedo}
+            onMatUseAlbedoChange={setMatUseAlbedo}
             onSaveView={handleSaveViewSettings}
             onDeleteView={handleDeleteViewSettings}
             onResetView={() => resetViewSettings(selectedModel.view_settings)}

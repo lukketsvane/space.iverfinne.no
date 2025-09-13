@@ -194,6 +194,8 @@ export interface SettingsPanelProps {
     onMatIORChange: (v: number) => void
     matTransmission: number
     onMatTransmissionChange: (v: number) => void
+    matUseAlbedo: boolean
+    onMatUseAlbedoChange: (v: boolean) => void
     onSaveView: () => void
     onDeleteView: () => void
     onResetView: () => void
@@ -254,6 +256,8 @@ export function SettingsPanel(p: SettingsPanelProps) {
         onMatIORChange,
         matTransmission,
         onMatTransmissionChange,
+        matUseAlbedo,
+        onMatUseAlbedoChange,
         onSaveView,
         onDeleteView,
         onResetView,
@@ -308,8 +312,8 @@ export function SettingsPanel(p: SettingsPanelProps) {
                     </div>
                     <div className="flex items-center justify-between">
                         <label>Delete Model</label>
-                        <Button variant="destructive" size="sm" className="h-8" onClick={onDelete}>
-                            Delete
+                        <Button variant="ghost" size="icon" className="h-8 w-8 text-red-500 hover:text-red-500 hover:bg-red-500/10" onClick={onDelete}>
+                            <Trash2 className="h-4 w-4" />
                         </Button>
                     </div>
                 </div>
@@ -356,6 +360,10 @@ export function SettingsPanel(p: SettingsPanelProps) {
 
                             {matOverrideEnabled && (
                                 <>
+                                    <div className="flex items-center justify-between">
+                                        <label>Use Texture</label>
+                                        <Switch checked={matUseAlbedo} onCheckedChange={onMatUseAlbedoChange} />
+                                    </div>
                                     <div className="flex items-center justify-between">
                                         <label>Base Color</label>
                                         <input type="color" value={matBaseColor} onChange={(e) => onMatBaseColorChange(e.target.value)} className="w-8 h-8 p-0 bg-transparent border-none rounded-md" />

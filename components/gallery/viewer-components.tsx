@@ -56,6 +56,7 @@ const ModelViewerComponent = forwardRef<
             clearcoatRoughness: number
             ior: number
             transmission: number
+            useAlbedo: boolean
         }
     }
 >(({ modelUrl, materialMode, materialOverride }, ref) => {
@@ -126,7 +127,7 @@ const ModelViewerComponent = forwardRef<
             const base = originals.current.get(mesh.uuid)
             const createOverrideMaterial = (mat: any) => mkOverride({
                 ...materialOverride,
-                map: (mat as any)?.map || null,
+                map: materialOverride.useAlbedo ? ((mat as any)?.map || null) : null,
             });
 
             if (Array.isArray(base)) {
