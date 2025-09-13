@@ -843,73 +843,6 @@ export default function GalleryPage() {
         <div className="flex items-center gap-2">
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
-              <Button variant="outline" className="h-8 px-3 border-white/20 bg-transparent flex items-center gap-2">
-                <ListFilter className="h-4 w-4" />
-                Filters{activeFilterCount > 0 && <span className="ml-1 rounded-full bg-white text-black text-xs px-2 py-0.5">{activeFilterCount}</span>}
-              </Button>
-            </DropdownMenuTrigger>
-            <DropdownMenuContent align="end" className="w-72">
-              <DropdownMenuLabel>Visibility</DropdownMenuLabel>
-              <DropdownMenuRadioGroup value={filterVisibility} onValueChange={(v: any) => setFilterVisibility(v)}>
-                <DropdownMenuRadioItem value="all">All</DropdownMenuRadioItem>
-                <DropdownMenuRadioItem value="public">Public</DropdownMenuRadioItem>
-                <DropdownMenuRadioItem value="private">Private</DropdownMenuRadioItem>
-              </DropdownMenuRadioGroup>
-              <DropdownMenuSeparator />
-              <DropdownMenuLabel>Folder</DropdownMenuLabel>
-              <div className="max-h-60 overflow-y-auto px-1">
-                {(allFolders ?? []).map((f) => (
-                  <DropdownMenuCheckboxItem
-                    key={f.id}
-                    checked={filterFolderIds.has(f.id)}
-                    onSelect={(e) => e.preventDefault()}
-                    onCheckedChange={(checked) => {
-                      const newSet = new Set(filterFolderIds)
-                      if (checked) {
-                        newSet.add(f.id)
-                      } else {
-                        newSet.delete(f.id)
-                      }
-                      setFilterFolderIds(newSet)
-                    }}
-                  >
-                    {f.name}
-                  </DropdownMenuCheckboxItem>
-                ))}
-              </div>
-              <DropdownMenuSeparator />
-              <DropdownMenuLabel>Date</DropdownMenuLabel>
-              <DropdownMenuRadioGroup value={filterDate} onValueChange={(v: any) => setFilterDate(v)}>
-                <DropdownMenuRadioItem value="any">Any time</DropdownMenuRadioItem>
-                <DropdownMenuRadioItem value="24h">Last 24 hours</DropdownMenuRadioItem>
-                <DropdownMenuRadioItem value="7d">Last 7 days</DropdownMenuRadioItem>
-                <DropdownMenuRadioItem value="30d">Last 30 days</DropdownMenuRadioItem>
-                <DropdownMenuRadioItem value="365d">Last year</DropdownMenuRadioItem>
-              </DropdownMenuRadioGroup>
-              <DropdownMenuSeparator />
-              <DropdownMenuLabel>Thumbnails</DropdownMenuLabel>
-              <DropdownMenuRadioGroup value={filterHasThumb} onValueChange={(v: any) => setFilterHasThumb(v)}>
-                <DropdownMenuRadioItem value="any">Any</DropdownMenuRadioItem>
-                <DropdownMenuRadioItem value="yes">Has thumbnail</DropdownMenuRadioItem>
-                <DropdownMenuRadioItem value="no">Missing thumbnail</DropdownMenuRadioItem>
-              </DropdownMenuRadioGroup>
-              <DropdownMenuSeparator />
-              <DropdownMenuCheckboxItem
-                checked={false}
-                onCheckedChange={() => {
-                  setFilterVisibility("all")
-                  setFilterFolderIds(new Set())
-                  setFilterDate("any")
-                  setFilterHasThumb("any")
-                }}
-              >
-                Clear filters
-              </DropdownMenuCheckboxItem>
-            </DropdownMenuContent>
-          </DropdownMenu>
-
-          <DropdownMenu>
-            <DropdownMenuTrigger asChild>
               <Button variant="outline" size="icon" className="h-8 w-8 border-white/20 bg-transparent">
                 <ListFilter className="h-4 w-4" />
               </Button>
@@ -955,16 +888,85 @@ export default function GalleryPage() {
             </Button>
           </div>
 
-          <div className="flex items-center gap-2 flex-wrap">
-            {(["all", "models", "public", "drafts"] as Pill[]).map((k) => (
-              <button
-                key={k}
-                className={cn("px-3 py-1.5 rounded-full text-sm", pill === k ? "bg-white text-black" : "bg-white/10 text-white/80 hover:bg-white/20")}
-                onClick={() => setPill(k)}
-              >
-                {k === "all" ? "All" : k[0].toUpperCase() + k.slice(1)}
-              </button>
-            ))}
+          <div className="flex items-center justify-between gap-2 flex-wrap mt-4">
+            <div className="flex items-center gap-2 flex-wrap">
+              {(["all", "models", "public", "drafts"] as Pill[]).map((k) => (
+                <button
+                  key={k}
+                  className={cn("px-3 py-1.5 rounded-full text-sm", pill === k ? "bg-white text-black" : "bg-white/10 text-white/80 hover:bg-white/20")}
+                  onClick={() => setPill(k)}
+                >
+                  {k === "all" ? "All" : k[0].toUpperCase() + k.slice(1)}
+                </button>
+              ))}
+            </div>
+
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button variant="outline" className="h-8 px-3 border-white/20 bg-transparent flex items-center gap-2">
+                  <ListFilter className="h-4 w-4" />
+                  Filters{activeFilterCount > 0 && <span className="ml-1 rounded-full bg-white text-black text-xs px-2 py-0.5">{activeFilterCount}</span>}
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end" className="w-72">
+                <DropdownMenuLabel>Visibility</DropdownMenuLabel>
+                <DropdownMenuRadioGroup value={filterVisibility} onValueChange={(v: any) => setFilterVisibility(v)}>
+                  <DropdownMenuRadioItem value="all">All</DropdownMenuRadioItem>
+                  <DropdownMenuRadioItem value="public">Public</DropdownMenuRadioItem>
+                  <DropdownMenuRadioItem value="private">Private</DropdownMenuRadioItem>
+                </DropdownMenuRadioGroup>
+                <DropdownMenuSeparator />
+                <DropdownMenuLabel>Folder</DropdownMenuLabel>
+                <div className="max-h-60 overflow-y-auto px-1">
+                  {(allFolders ?? []).map((f) => (
+                    <DropdownMenuCheckboxItem
+                      key={f.id}
+                      checked={filterFolderIds.has(f.id)}
+                      onSelect={(e) => e.preventDefault()}
+                      onCheckedChange={(checked) => {
+                        const newSet = new Set(filterFolderIds)
+                        if (checked) {
+                          newSet.add(f.id)
+                        } else {
+                          newSet.delete(f.id)
+                        }
+                        setFilterFolderIds(newSet)
+                      }}
+                    >
+                      {f.name}
+                    </DropdownMenuCheckboxItem>
+                  ))}
+                </div>
+                <DropdownMenuSeparator />
+                <DropdownMenuLabel>Date</DropdownMenuLabel>
+                <DropdownMenuRadioGroup value={filterDate} onValueChange={(v: any) => setFilterDate(v)}>
+                  <DropdownMenuRadioItem value="any">Any time</DropdownMenuRadioItem>
+                  <DropdownMenuRadioItem value="24h">Last 24 hours</DropdownMenuRadioItem>
+                  <DropdownMenuRadioItem value="7d">Last 7 days</DropdownMenuRadioItem>
+                  <DropdownMenuRadioItem value="30d">Last 30 days</DropdownMenuRadioItem>
+                  <DropdownMenuRadioItem value="365d">Last year</DropdownMenuRadioItem>
+                </DropdownMenuRadioGroup>
+                <DropdownMenuSeparator />
+                <DropdownMenuLabel>Thumbnails</DropdownMenuLabel>
+                <DropdownMenuRadioGroup value={filterHasThumb} onValueChange={(v: any) => setFilterHasThumb(v)}>
+                  <DropdownMenuRadioItem value="any">Any</DropdownMenuRadioItem>
+                  <DropdownMenuRadioItem value="yes">Has thumbnail</DropdownMenuRadioItem>
+                  <DropdownMenuRadioItem value="no">Missing thumbnail</DropdownMenuRadioItem>
+                </DropdownMenuRadioGroup>
+                <DropdownMenuSeparator />
+                <DropdownMenuCheckboxItem
+                  checked={false}
+                  onCheckedChange={() => {
+                    setFilterVisibility("all")
+                    setFilterFolderIds(new Set())
+                    setFilterDate("any")
+                    setFilterHasThumb("any")
+                  }}
+                >
+                  Clear filters
+                </DropdownMenuCheckboxItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
           </div>
         </div>
       </div>
