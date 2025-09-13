@@ -351,7 +351,7 @@ export function SettingsPanel(p: SettingsPanelProps) {
 
                     <div className="space-y-2 bg-white/5 p-3 rounded-md">
                         <div className="flex items-center justify-between text-xs">
-                            <label>Override (Clay)</label>
+                            <label>Override</label>
                             <Switch checked={matOverrideEnabled} onCheckedChange={onMatOverrideEnabledChange} />
                         </div>
 

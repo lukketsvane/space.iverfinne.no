@@ -23,9 +23,11 @@ const mkOverride = (o: {
     clearcoatRoughness: number
     ior: number
     transmission: number
+    map?: THREE.Texture | null
 }) => {
     const mat = new THREE.MeshPhysicalMaterial({
-        color: new THREE.Color(o.color),
+        color: o.map ? 0xffffff : new THREE.Color(o.color),
+        map: o.map || null,
         metalness: o.metalness,
         roughness: o.roughness,
         clearcoat: o.clearcoat,
@@ -122,28 +124,15 @@ export const ModelViewer = forwardRef<
             }
             const base = originals.current.get(mesh.uuid)
             if (Array.isArray(base)) {
-                const ov = base.map(() =>
-                    mkOverride({
-                        color: materialOverride.color,
-                        metalness: materialOverride.metalness,
-                        roughness: materialOverride.roughness,
-                        clearcoat: materialOverride.clearcoat,
-                        clearcoatRoughness: materialOverride.clearcoatRoughness,
-                        ior: materialOverride.ior,
-                        transmission: materialOverride.transmission,
-                    }),
+                const ov = base.map((m: any) =>
+                    mkOverride({ ...materialOverride, map: m.map || null })
                 )
                 overrides.current.set(mesh.uuid, ov)
                 mesh.material = ov
             } else {
                 const ov = mkOverride({
-                    color: materialOverride.color,
-                    metalness: materialOverride.metalness,
-                    roughness: materialOverride.roughness,
-                    clearcoat: materialOverride.clearcoat,
-                    clearcoatRoughness: materialOverride.clearcoatRoughness,
-                    ior: materialOverride.ior,
-                    transmission: materialOverride.transmission,
+                    ...materialOverride,
+                    map: (base as any)?.map || null,
                 })
                 overrides.current.set(mesh.uuid, ov)
                 mesh.material = ov
@@ -174,9 +163,10 @@ export function SpotLightInScene({ light }: { light: Light }) {
                 penumbra={light.penumbra}
                 decay={light.decay}
                 castShadow
-                shadow-mapSize={[1024, 1024]}
-                shadow-bias={-0.00015}
-                distance={0}
+                shadow-mapSize={[2048, 2048]}
+                shadow-bias={-0.0001}
+                shadow-normalBias={0.02}
+                distance={light.distance ?? 0}
             />
             <primitive object={target.current} />
         </>

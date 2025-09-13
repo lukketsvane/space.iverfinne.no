@@ -204,8 +204,8 @@ export default function GalleryPage() {
 
   const [matOverrideEnabled, setMatOverrideEnabled] = useState(false)
   const [matBaseColor, setMatBaseColor] = useState<string>("#e5e5e5")
-  const [matMetalness, setMatMetalness] = useState<number>(0)
-  const [matRoughness, setMatRoughness] = useState<number>(0.6)
+  const [matMetalness, setMatMetalness] = useState<number>(1)
+  const [matRoughness, setMatRoughness] = useState<number>(1)
   const [matClearcoat, setMatClearcoat] = useState<number>(0)
   const [matClearcoatRough, setMatClearcoatRough] = useState<number>(0.6)
   const [matIOR, setMatIOR] = useState<number>(1.5)
@@ -241,8 +241,8 @@ export default function GalleryPage() {
       setIsOrthographic(s?.orthographic ?? false)
       setMatOverrideEnabled(!!s?.materialOverride?.enabled)
       setMatBaseColor(s?.materialOverride?.color ?? "#e5e5e5")
-      setMatMetalness(s?.materialOverride?.metalness ?? 0)
-      setMatRoughness(s?.materialOverride?.roughness ?? 0.6)
+      setMatMetalness(s?.materialOverride?.metalness ?? 1)
+      setMatRoughness(s?.materialOverride?.roughness ?? 1)
       setMatClearcoat(s?.materialOverride?.clearcoat ?? 0)
       setMatClearcoatRough(s?.materialOverride?.clearcoatRoughness ?? 0.6)
       setMatIOR(s?.materialOverride?.ior ?? 1.5)
@@ -537,9 +537,14 @@ export default function GalleryPage() {
       if (k === "1") setMaterialMode("white")
       if (k === "2") setMaterialMode("pbr")
       if (k === "3") setMaterialMode("normal")
+      if (k === "f") {
+        e.preventDefault()
+        setBoundsKey((key) => key + 1)
+      }
       if (k === "o") {
         e.preventDefault()
         setIsOrthographic((prev) => !prev)
+        setBoundsKey((key) => key + 1)
       }
       if (k === "e") {
         e.preventDefault()

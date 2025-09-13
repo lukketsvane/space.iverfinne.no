@@ -25,7 +25,7 @@ import { useIsMobile } from "@/hooks/use-mobile"
 import { lightingPresets } from "@/lib/lighting-presets"
 import { cn } from "@/lib/utils"
 import type { Folder, GalleryItem, Light, Model, ViewSettings } from "@/types"
-import { Bounds, OrbitControls, useGLTF } from "@react-three/drei"
+import { Bounds, GizmoHelper, GizmoViewport, OrbitControls, OrthographicCamera, PerspectiveCamera, useGLTF } from "@react-three/drei"
 import { Canvas } from "@react-three/fiber"
 import { Bloom, EffectComposer } from "@react-three/postprocessing"
 import { upload } from "@vercel/blob/client"
@@ -71,9 +71,6 @@ export default function GalleryPage() {
   const { data: breadcrumbData } = useSWR<{ id: string; name: string }[]>(currentFolderId ? `/api/folders/${currentFolderId}/breadcrumbs` : null, fetcher)
 
   useEffect(() => {
-    // This effect adds meta tags for a better Progressive Web App (PWA) experience on iOS.
-    // When saved to the home screen, the app will open in full-screen mode.
-    // Ideally, these tags should be in the root layout file (e.g., layout.tsx).
     if (document.querySelector('meta[name="apple-mobile-web-app-capable"]')) return
 
     const metaTags = [
@@ -125,7 +122,7 @@ export default function GalleryPage() {
 
   const folderById = useMemo(() => {
     const map = new Map<string, Folder>()
-    ;(allFolders ?? []).forEach((f) => map.set(f.id, f))
+      ; (allFolders ?? []).forEach((f) => map.set(f.id, f))
     return map
   }, [allFolders])
 
@@ -202,6 +199,11 @@ export default function GalleryPage() {
   const [lights, setLights] = useState<Light[]>([])
   const [selectedLightId, setSelectedLightId] = useState<number | null>(null)
 
+  const [fov, setFov] = useState(50)
+  const [isOrthographic, setIsOrthographic] = useState(false)
+  const [cameraPosition, setCameraPosition] = useState<[number, number, number]>([5, 5, 5])
+  const [cameraTarget, setCameraTarget] = useState<[number, number, number]>([0, 0, 0])
+
   const [matOverrideEnabled, setMatOverrideEnabled] = useState(false)
   const [matBaseColor, setMatBaseColor] = useState<string>("#e5e5e5")
   const [matMetalness, setMatMetalness] = useState<number>(0)
@@ -237,6 +239,8 @@ export default function GalleryPage() {
       setBgColor2(s?.bgColor2 ?? "#1a1a1a")
       setBgImage(s?.bgImage ?? null)
       setMaterialMode(s?.materialMode ?? "white")
+      setFov(s?.fov ?? 50)
+      setIsOrthographic(s?.orthographic ?? false)
       setMatOverrideEnabled(!!s?.materialOverride?.enabled)
       setMatBaseColor(s?.materialOverride?.color ?? "#e5e5e5")
       setMatMetalness(s?.materialOverride?.metalness ?? 0)
@@ -253,43 +257,28 @@ export default function GalleryPage() {
   useEffect(() => {
     if (!selectedModel) return
     resetViewSettings(selectedModel.view_settings)
-    if (orbitControlsRef.current && selectedModel.view_settings?.cameraPosition) {
-      orbitControlsRef.current.object.position.set(...selectedModel.view_settings.cameraPosition)
-      orbitControlsRef.current.target.set(...(selectedModel.view_settings.cameraTarget ?? [0, 0, 0]))
-      orbitControlsRef.current.update()
-    }
+    setCameraPosition(selectedModel.view_settings?.cameraPosition || [5, 5, 5])
+    setCameraTarget(selectedModel.view_settings?.cameraTarget || [0, 0, 0])
   }, [selectedModel, resetViewSettings])
 
   useEffect(() => {
-    // This effect runs when a new model is selected. It sets up the default camera view.
-    if (modelRef.current && orbitControlsRef.current && selectedModel) {
-      // The ModelViewer component already centers and grounds the model.
-      // We just need to ensure the ground plane is in the right spot.
+    if (modelRef.current && selectedModel) {
       setGroundY(-0.001)
 
-      // Check if there isn't a pre-saved camera position for this model.
-      // If not, we calculate and set a nice default 3/4 view.
       if (!selectedModel.view_settings?.cameraPosition) {
         const box = new THREE.Box3().setFromObject(modelRef.current)
         const size = box.getSize(new THREE.Vector3())
         const center = box.getCenter(new THREE.Vector3())
         const maxDim = Math.max(size.x, size.y, size.z)
-        const camera = orbitControlsRef.current.object
 
-        // Position camera at a 3/4 angle based on the model's dimensions.
-        // The distance is scaled by the largest dimension to provide a reasonable starting point.
-        camera.position.set(center.x + maxDim, center.y + maxDim, center.z + maxDim)
+        const newPos: [number, number, number] = [center.x + maxDim, center.y + maxDim, center.z + maxDim]
+        const newTgt: [number, number, number] = [center.x, center.y, center.z]
 
-        // Aim the camera and controls at the model's center.
-        orbitControlsRef.current.target.copy(center)
-        orbitControlsRef.current.update()
+        setCameraPosition(newPos)
+        setCameraTarget(newTgt)
       }
-
-      // Finally, trigger the <Bounds> component to fit the view to the model
-      // using the new (or saved) camera orientation.
       setBoundsKey((k) => k + 1)
     }
-    // This effect should re-run whenever the selectedModel object changes.
   }, [selectedModel])
 
   const updateQuery = (params: Record<string, string | null>) => {
@@ -381,7 +370,7 @@ export default function GalleryPage() {
               folder_id: currentFolderId
             })
           })
-        } catch {}
+        } catch { }
       })
     )
     mutate(galleryUrl)
@@ -406,12 +395,12 @@ export default function GalleryPage() {
   }
 
   const handleBulkDelete = async () => {
-    await bulkAct(Array.from(selectedItems), (id) => fetch(`/api/models/${id}`, { method: "DELETE" }).then(() => {}))
+    await bulkAct(Array.from(selectedItems), (id) => fetch(`/api/models/${id}`, { method: "DELETE" }).then(() => { }))
     if (Array.from(selectedItems).includes(modelId || "")) handleCloseViewer()
     setSelectedItems(new Set())
   }
 
-  const handleBulkMove = async (_targetFolderId: string | null) => {}
+  const handleBulkMove = async (_targetFolderId: string | null) => { }
 
   const handleBulkSetPublic = async (isPublic: boolean) => {
     await bulkAct(Array.from(selectedItems), (id) =>
@@ -419,14 +408,14 @@ export default function GalleryPage() {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ is_public: isPublic })
-      }).then(() => {})
+      }).then(() => { })
     )
     if (Array.from(selectedItems).includes(modelId || "")) mutateSelectedModel()
     setSelectedItems(new Set())
   }
 
   const handleSaveViewSettings = useCallback(async () => {
-    if (!selectedModel || !orbitControlsRef.current) return
+    if (!selectedModel) return
     const settings: ViewSettings = {
       lights: lights.map(({ id, visible, ...rest }) => rest),
       lightsEnabled,
@@ -437,8 +426,10 @@ export default function GalleryPage() {
       bgColor1,
       bgColor2,
       bgImage,
-      cameraPosition: orbitControlsRef.current.object.position.toArray() as [number, number, number],
-      cameraTarget: orbitControlsRef.current.target.toArray() as [number, number, number],
+      fov,
+      orthographic: isOrthographic,
+      cameraPosition,
+      cameraTarget,
       materialMode,
       materialOverride: {
         enabled: matOverrideEnabled,
@@ -462,6 +453,10 @@ export default function GalleryPage() {
     bgColor1,
     bgColor2,
     bgImage,
+    fov,
+    isOrthographic,
+    cameraPosition,
+    cameraTarget,
     materialMode,
     matOverrideEnabled,
     matBaseColor,
@@ -487,10 +482,10 @@ export default function GalleryPage() {
   }
 
   const randomizeAllPartial = () => ({
-    intensity: 10 + Math.random() * 40, // Range: 10 to 50 (2x brighter)
-    kelvin: 1500 + Math.random() * 10500, // Range: 1500K to 12000K (more dynamic color)
-    angle: 10 + Math.random() * 80, // Range: 10 to 90 degrees (more dynamic cone)
-    penumbra: Math.random() // Range: 0 to 1 (more dynamic edge softness)
+    intensity: 10 + Math.random() * 40,
+    kelvin: 1500 + Math.random() * 10500,
+    angle: 10 + Math.random() * 80,
+    penumbra: Math.random()
   })
   const handleLightChange = (id: number, v: Partial<Omit<Light, "id">>) => setLights((ls) => ls.map((l) => (l.id === id ? { ...l, ...v } : l)))
   const addLight = () => {
@@ -544,6 +539,10 @@ export default function GalleryPage() {
       if (k === "1") setMaterialMode("white")
       if (k === "2") setMaterialMode("pbr")
       if (k === "3") setMaterialMode("normal")
+      if (k === "o") {
+        e.preventDefault()
+        setIsOrthographic((prev) => !prev)
+      }
       if (k === "e") {
         e.preventDefault()
         setEnvironmentEnabled(true)
@@ -552,10 +551,10 @@ export default function GalleryPage() {
       }
       if (k === "t") {
         e.preventDefault()
-        ;(async () => {
-          await handleSaveViewSettings()
-          await handleCaptureThumbnail()
-        })()
+          ; (async () => {
+            await handleSaveViewSettings()
+            await handleCaptureThumbnail()
+          })()
       }
       if (k === "r") {
         e.preventDefault()
@@ -582,7 +581,7 @@ export default function GalleryPage() {
       e.stopPropagation()
       setIsLightDragging(true)
       setIsOrbitControlsEnabled(false)
-      ;(e.target as HTMLElement).style.cursor = "grabbing"
+        ; (e.target as HTMLElement).style.cursor = "grabbing"
     }
   }
   const onPointerMove = (e: React.PointerEvent<HTMLDivElement>) => {
@@ -617,7 +616,6 @@ export default function GalleryPage() {
   const [renameItem, setRenameItem] = useState<Model | null>(null)
   const [editingFolder, setEditingFolder] = useState<Folder | null>(null)
 
-  // MOVED HOOKS AND FUNCTIONS BEFORE EARLY RETURN
   const activeFilterCount = useMemo(() => {
     let n = 0
     if (filterVisibility !== "all") n++
@@ -649,7 +647,7 @@ export default function GalleryPage() {
             gl.toneMappingExposure = 1
             gl.shadowMap.enabled = true
             gl.shadowMap.type = THREE.PCFSoftShadowMap
-            ;(gl as any).physicallyCorrectLights = true
+              ; (gl as any).physicallyCorrectLights = true
           }}
           onPointerMissed={(e) => e.button === 0 && setSelectedLightId(null)}
           onPointerDown={onPointerDown}
@@ -658,6 +656,11 @@ export default function GalleryPage() {
           onPointerLeave={onPointerUp}
           frameloop={isLightDragging ? "always" : "demand"}
         >
+          {isOrthographic ? (
+            <OrthographicCamera makeDefault position={cameraPosition} zoom={50} />
+          ) : (
+            <PerspectiveCamera makeDefault fov={fov} position={cameraPosition} />
+          )}
           <Suspense fallback={null}>
             {groundEnabled && (
               <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, groundY, 0]} receiveShadow>
@@ -690,7 +693,20 @@ export default function GalleryPage() {
             )}
             <CaptureController ref={captureControllerRef} modelRef={modelRef} />
           </Suspense>
-          <OrbitControls ref={orbitControlsRef} enabled={isOrbitControlsEnabled} makeDefault />
+          <OrbitControls
+            ref={orbitControlsRef}
+            enabled={isOrbitControlsEnabled}
+            target={cameraTarget}
+            onChange={(e) => {
+              if (e?.target) {
+                setCameraPosition(e.target.object.position.toArray())
+                setCameraTarget(e.target.target.toArray())
+              }
+            }}
+          />
+          <GizmoHelper alignment="bottom-right" margin={[80, 80]} key={isOrthographic ? "ortho" : "persp"}>
+            <GizmoViewport axisColors={["#9d4b4b", "#2f7f4f", "#3b5b9d"]} labelColor="white" />
+          </GizmoHelper>
           <ambientLight intensity={0.1} />
         </Canvas>
 
@@ -746,6 +762,10 @@ export default function GalleryPage() {
               onBgImageChange={setBgImage}
               materialMode={materialMode}
               onMaterialModeChange={setMaterialMode}
+              fov={fov}
+              onFovChange={setFov}
+              isOrthographic={isOrthographic}
+              onIsOrthographicChange={setIsOrthographic}
               matOverrideEnabled={matOverrideEnabled}
               onMatOverrideEnabledChange={setMatOverrideEnabled}
               matBaseColor={matBaseColor}
@@ -802,7 +822,7 @@ export default function GalleryPage() {
   }
 
   return (
-    <div className="min-h-screen bg-black text-white relative">
+    <div className="h-screen bg-black text-white relative flex flex-col">
       <div className="flex items-center justify-between px-4 md:px-8 py-4">
         <div className="text-sm text-white/70">
           {breadcrumbs.map((c, i) => (
@@ -839,7 +859,7 @@ export default function GalleryPage() {
                   <DropdownMenuCheckboxItem
                     key={f.id}
                     checked={filterFolderIds.has(f.id)}
-                    onSelect={(e) => e.preventDefault()} // Prevent menu from closing on click
+                    onSelect={(e) => e.preventDefault()}
                     onCheckedChange={(checked) => {
                       const newSet = new Set(filterFolderIds)
                       if (checked) {
@@ -947,7 +967,7 @@ export default function GalleryPage() {
       </div>
 
       <main
-        className="relative px-4 md:px-8 pb-24"
+        className="relative flex-1 overflow-y-auto px-4 md:px-8 pb-24"
         onClick={() => setSelectedItems(new Set())}
         onDrop={(e) => {
           e.preventDefault()
@@ -1001,7 +1021,7 @@ export default function GalleryPage() {
                       alt={item.name}
                       className="w-full h-full object-contain transition-transform duration-300 group-hover:scale-110"
                       onError={(e) => {
-                        ;(e.target as HTMLImageElement).src = `/placeholder.svg?width=400&height=400&query=error`
+                        ; (e.target as HTMLImageElement).src = `/placeholder.svg?width=400&height=400&query=error`
                       }}
                     />
                     <div className="absolute inset-0 bg-black/60 opacity-0 group-hover:opacity-100 transition-opacity duration-300 flex items-end p-2">
@@ -1085,6 +1105,7 @@ export default function GalleryPage() {
   )
 }
 
+
 === /workspaces/space.iverfinne.no/components/gallery/bulk-action-bar.tsx ===
 
 "use client"
@@ -1137,8 +1158,7 @@ export function BulkActionBar({ selectedCount, onClear, onDelete, onMove, onSetP
 
 === /workspaces/space.iverfinne.no/components/gallery/settings-panel.tsx ===
 
-﻿// === /workspaces/space.iverfinne.no/components/gallery/settings-panel.tsx ===
-"use client"
+﻿"use client"
 
 import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from "@/components/ui/accordion"
 import { Button } from "@/components/ui/button"
@@ -1157,7 +1177,7 @@ function EditableValue({
     onSave,
     units = "",
     className,
-    inputClassName,
+    inputClassName
 }: {
     value: string | number
     onSave: (newValue: string) => void
@@ -1217,9 +1237,9 @@ function DirectionalPad({ value, onChange }: { value: { x: number; z: number }; 
                     z = (z / d) * half
                 }
                 onChange({ x: (x / half) * 5, z: (z / half) * 5 })
-            },
+            }
         },
-        { drag: { filterTaps: true } },
+        { drag: { filterTaps: true } }
     )
     const handleX = (value.x / 5) * 50,
         handleZ = (value.z / 5) * 50
@@ -1287,7 +1307,6 @@ export interface SettingsPanelProps {
     onThumbnailUpload: (file: File) => void
     onCaptureThumbnail: () => void
     onDeleteThumbnail: () => void
-    // lights
     lights: Light[]
     onLightChange: (id: number, newValues: Partial<Omit<Light, "id">>) => void
     addLight: () => void
@@ -1299,7 +1318,6 @@ export interface SettingsPanelProps {
     onFocusLight: (id: number) => void
     lightsEnabled: boolean
     onLightsEnabledChange: (enabled: boolean) => void
-    // environment
     environmentEnabled: boolean
     onEnvironmentEnabledChange: (enabled: boolean) => void
     bloomEnabled: boolean
@@ -1312,9 +1330,12 @@ export interface SettingsPanelProps {
     onBgColor2Change: (value: string) => void
     bgImage: string | null
     onBgImageChange: (value: string | null) => void
-    // materials
     materialMode: "pbr" | "normal" | "white"
     onMaterialModeChange: (m: "pbr" | "normal" | "white") => void
+    fov: number
+    onFovChange: (v: number) => void
+    isOrthographic: boolean
+    onIsOrthographicChange: (v: boolean) => void
     matOverrideEnabled: boolean
     onMatOverrideEnabledChange: (v: boolean) => void
     matBaseColor: string
@@ -1331,11 +1352,9 @@ export interface SettingsPanelProps {
     onMatIORChange: (v: number) => void
     matTransmission: number
     onMatTransmissionChange: (v: number) => void
-    // view
     onSaveView: () => void
     onDeleteView: () => void
     onResetView: () => void
-    // presets
     onApplyPreset: (name: string) => void
     presets: string[]
 }
@@ -1348,7 +1367,6 @@ export function SettingsPanel(p: SettingsPanelProps) {
         onThumbnailUpload,
         onCaptureThumbnail,
         onDeleteThumbnail,
-        // lights
         lights,
         onLightChange,
         addLight,
@@ -1360,7 +1378,6 @@ export function SettingsPanel(p: SettingsPanelProps) {
         onFocusLight,
         lightsEnabled,
         onLightsEnabledChange,
-        // env
         environmentEnabled,
         onEnvironmentEnabledChange,
         bloomEnabled,
@@ -1373,9 +1390,12 @@ export function SettingsPanel(p: SettingsPanelProps) {
         onBgColor2Change,
         bgImage,
         onBgImageChange,
-        // materials
         materialMode,
         onMaterialModeChange,
+        fov,
+        onFovChange,
+        isOrthographic,
+        onIsOrthographicChange,
         matOverrideEnabled,
         onMatOverrideEnabledChange,
         matBaseColor,
@@ -1392,20 +1412,16 @@ export function SettingsPanel(p: SettingsPanelProps) {
         onMatIORChange,
         matTransmission,
         onMatTransmissionChange,
-        // view
         onSaveView,
         onDeleteView,
         onResetView,
-        // presets
         onApplyPreset,
-        presets,
+        presets
     } = p
 
     const [preset, setPreset] = useState<string>(presets[0] ?? "")
     const thumbnailInputRef = useRef<HTMLInputElement>(null)
     const bgImageInputRef = useRef<HTMLInputElement>(null)
-
-    // collapsed-by-default Lights section
     const [lightsSectionOpen, setLightsSectionOpen] = useState(false)
 
     const handleBgImageUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -1419,7 +1435,6 @@ export function SettingsPanel(p: SettingsPanelProps) {
     return (
         <div className="px-4 pb-4 flex flex-col h-full text-white overflow-y-auto">
             <div className="space-y-4 flex-1 overflow-y-auto pr-2 -mr-2">
-                {/* Model controls */}
                 <div className="space-y-2">
                     <div className="flex items-center justify-between text-xs">
                         <label>Name</label>
@@ -1459,7 +1474,24 @@ export function SettingsPanel(p: SettingsPanelProps) {
 
                 <Separator className="bg-white/20" />
 
-                {/* Materials */}
+                <div className="space-y-3">
+                    <h3 className="text-sm font-semibold">Camera</h3>
+                    <div className="space-y-2 bg-white/5 p-3 rounded-md">
+                        <div className="flex items-center justify-between text-xs">
+                            <label>Orthographic</label>
+                            <Switch checked={isOrthographic} onCheckedChange={onIsOrthographicChange} />
+                        </div>
+                        {!isOrthographic && (
+                            <div className="flex items-center justify-between text-xs">
+                                <label>Field of View</label>
+                                <Slider value={[fov]} onValueChange={([v]) => onFovChange(v)} min={10} max={120} step={1} className="w-2/3" />
+                            </div>
+                        )}
+                    </div>
+                </div>
+
+                <Separator className="bg-white/20" />
+
                 <div className="space-y-3">
                     <div className="flex items-center justify-between">
                         <h3 className="text-sm font-semibold">Material</h3>
@@ -1520,7 +1552,6 @@ export function SettingsPanel(p: SettingsPanelProps) {
 
                 <Separator className="bg-white/20" />
 
-                {/* Lights (collapsed by default) */}
                 <div className="space-y-3">
                     <div className="flex items-center justify-between cursor-pointer" onClick={() => setLightsSectionOpen((s) => !s)}>
                         <h3 className="text-sm font-semibold">Lights</h3>
@@ -1581,7 +1612,6 @@ export function SettingsPanel(p: SettingsPanelProps) {
 
                 <Separator className="bg-white/20" />
 
-                {/* Environment */}
                 <div className="space-y-2">
                     <div className="flex items-center justify-between">
                         <h3 className="text-sm font-semibold">Environment</h3>
@@ -1637,7 +1667,6 @@ export function SettingsPanel(p: SettingsPanelProps) {
                     )}
                 </div>
 
-                {/* View actions */}
                 <div className="flex items-center justify-end gap-2">
                     <Button variant="ghost" size="icon" className="h-6 w-6" disabled={!model.view_settings} onClick={onDeleteView}>
                         <Trash2 className="h-3 w-3" />
@@ -1991,65 +2020,71 @@ export const CaptureController = forwardRef<{ capture: () => Promise<File | null
             async capture() {
                 if (!modelRef.current) return null
                 const bg = scene.background
-                scene.background = null
-                gl.render(scene, camera)
-                const box = new THREE.Box3().setFromObject(modelRef.current)
-                const v = new THREE.Vector3()
-                const pts = [
-                    v.set(box.min.x, box.min.y, box.min.z).clone(),
-                    v.set(box.min.x, box.min.y, box.max.z).clone(),
-                    v.set(box.min.x, box.max.y, box.min.z).clone(),
-                    v.set(box.min.x, box.max.y, box.max.z).clone(),
-                    v.set(box.max.x, box.min.y, box.min.z).clone(),
-                    v.set(box.max.x, box.min.y, box.max.z).clone(),
-                    v.set(box.max.x, box.max.y, box.min.z).clone(),
-                    v.set(box.max.x, box.max.y, box.max.z).clone(),
-                ]
-                let minX = Infinity,
-                    minY = Infinity,
-                    maxX = -Infinity,
-                    maxY = -Infinity
-                for (const p of pts) {
-                    const s = p.clone().project(camera)
-                    const x = ((s.x + 1) / 2) * gl.domElement.width,
-                        y = (-(s.y - 1) / 2) * gl.domElement.height
-                    minX = Math.min(minX, x)
-                    maxX = Math.max(maxX, x)
-                    minY = Math.min(minY, y)
-                    maxY = Math.max(maxY, y)
-                }
-                const bw = maxX - minX,
-                    bh = maxY - minY
-                if (bw <= 0 || bh <= 0) {
+                const shadowPlane = scene.children.find((child) => child instanceof THREE.Mesh && child.material instanceof THREE.ShadowMaterial)
+
+                try {
+                    if (shadowPlane) shadowPlane.visible = false
+                    scene.background = null
+                    gl.render(scene, camera)
+
+                    const box = new THREE.Box3().setFromObject(modelRef.current)
+                    const v = new THREE.Vector3()
+                    const pts = [
+                        v.set(box.min.x, box.min.y, box.min.z).clone(),
+                        v.set(box.min.x, box.min.y, box.max.z).clone(),
+                        v.set(box.min.x, box.max.y, box.min.z).clone(),
+                        v.set(box.min.x, box.max.y, box.max.z).clone(),
+                        v.set(box.max.x, box.min.y, box.min.z).clone(),
+                        v.set(box.max.x, box.min.y, box.max.z).clone(),
+                        v.set(box.max.x, box.max.y, box.min.z).clone(),
+                        v.set(box.max.x, box.max.y, box.max.z).clone()
+                    ]
+                    let minX = Infinity,
+                        minY = Infinity,
+                        maxX = -Infinity,
+                        maxY = -Infinity
+                    for (const p of pts) {
+                        const s = p.clone().project(camera)
+                        const x = ((s.x + 1) / 2) * gl.domElement.width,
+                            y = (-(s.y - 1) / 2) * gl.domElement.height
+                        minX = Math.min(minX, x)
+                        maxX = Math.max(maxX, x)
+                        minY = Math.min(minY, y)
+                        maxY = Math.max(maxY, y)
+                    }
+                    const bw = maxX - minX,
+                        bh = maxY - minY
+                    if (bw <= 0 || bh <= 0) {
+                        return null
+                    }
+                    const size = Math.max(bw, bh) * 1.2,
+                        cx = minX + bw / 2,
+                        cy = minY + bh / 2
+                    const sx = cx - size / 2,
+                        sy = cy - size / 2
+                    const tmp = document.createElement("canvas")
+                    tmp.width = 512
+                    tmp.height = 512
+                    const ctx = tmp.getContext("2d")
+                    if (!ctx) {
+                        return null
+                    }
+                    ctx.drawImage(gl.domElement, sx, sy, size, size, 0, 0, 512, 512)
+                    const b64 = tmp.toDataURL("image/png")
+                    const [meta, data] = b64.split(",")
+                    const mime = meta.match(/:(.*?);/)?.[1] ?? "image/png"
+                    const bin = atob(data),
+                        buf = new Uint8Array(bin.length)
+                    for (let i = 0; i < bin.length; i++) buf[i] = bin.charCodeAt(i)
+                    return new File([buf], `thumbnail-${Date.now()}.png`, { type: mime })
+                } finally {
+                    if (shadowPlane) shadowPlane.visible = true
                     scene.background = bg
-                    return null
                 }
-                const size = Math.max(bw, bh) * 1.2,
-                    cx = minX + bw / 2,
-                    cy = minY + bh / 2
-                const sx = cx - size / 2,
-                    sy = cy - size / 2
-                const tmp = document.createElement("canvas")
-                tmp.width = 512
-                tmp.height = 512
-                const ctx = tmp.getContext("2d")
-                if (!ctx) {
-                    scene.background = bg
-                    return null
-                }
-                ctx.drawImage(gl.domElement, sx, sy, size, size, 0, 0, 512, 512)
-                scene.background = bg
-                const b64 = tmp.toDataURL("image/png")
-                const [meta, data] = b64.split(",")
-                const mime = meta.match(/:(.*?);/)?.[1] ?? "image/png"
-                const bin = atob(data),
-                    buf = new Uint8Array(bin.length)
-                for (let i = 0; i < bin.length; i++) buf[i] = bin.charCodeAt(i)
-                return new File([buf], `thumbnail-${Date.now()}.png`, { type: mime })
-            },
+            }
         }))
         return null
-    },
+    }
 )
 CaptureController.displayName = "CaptureController"
 
@@ -2570,9 +2605,7 @@ export interface Light {
   decay: number
   angle: number
   penumbra: number
-  /** legacy, ignored by the new renderer */
   volumeOpacity?: number
-  /** physically-correct falloff distance (0 = infinite) */
   distance?: number
 }
 
@@ -2586,12 +2619,11 @@ export interface ViewSettings {
   bgColor1: string
   bgColor2: string
   bgImage: string | null
-  /** kept for backward compatibility, not used */
-  fieldOfView?: number
+  fov: number
+  orthographic: boolean
   cameraPosition: [number, number, number] | null
   cameraTarget: [number, number, number] | null
   materialMode: "pbr" | "normal" | "white"
-  /** Material override (clay/physical) */
   materialOverride?: {
     enabled: boolean
     color: string
