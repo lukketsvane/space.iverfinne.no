@@ -36,6 +36,7 @@ export interface ViewSettings {
     clearcoatRoughness: number
     ior: number
     transmission: number
+    useAlbedo?: boolean
   }
 }
 

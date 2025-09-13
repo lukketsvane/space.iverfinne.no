@@ -27,7 +27,7 @@ import { Bounds, GizmoHelper, GizmoViewport, OrbitControls, OrthographicCamera, 
 import { Canvas } from "@react-three/fiber"
 import { Bloom, EffectComposer } from "@react-three/postprocessing"
 import { upload } from "@vercel/blob/client"
-import { ChevronDown, ChevronLeft, Dice5, Download, Globe, Info, ListFilter, Lock, Palette, Plus, Search, Upload } from "lucide-react"
+import { ChevronDown, ChevronLeft, Dice5, Download, Globe, Info, ListFilter, Lock, Palette, Plus, Search, Upload, XIcon } from "lucide-react"
 import { useRouter, useSearchParams } from "next/navigation"
 import type React from "react"
 import { Fragment, Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react"
@@ -69,18 +69,24 @@ export default function GalleryPage() {
   const { data: breadcrumbData } = useSWR<{ id: string; name: string }[]>(currentFolderId ? `/api/folders/${currentFolderId}/breadcrumbs` : null, fetcher)
 
   useEffect(() => {
-    if (document.querySelector('meta[name="apple-mobile-web-app-capable"]')) return
+    if (document.querySelector('meta[name="viewport"]')) return
 
     const metaTags = [
+      { name: "viewport", content: "width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no" },
       { name: "apple-mobile-web-app-capable", content: "yes" },
       { name: "apple-mobile-web-app-status-bar-style", content: "black-translucent" }
     ]
 
     metaTags.forEach((tagInfo) => {
-      const meta = document.createElement("meta")
-      meta.name = tagInfo.name
-      meta.content = tagInfo.content
-      document.head.appendChild(meta)
+      let meta = document.querySelector(`meta[name="${tagInfo.name}"]`) as HTMLMetaElement
+      if (meta) {
+        meta.content = tagInfo.content
+      } else {
+        meta = document.createElement("meta")
+        meta.name = tagInfo.name
+        meta.content = tagInfo.content
+        document.head.appendChild(meta)
+      }
     })
   }, [])
 
@@ -336,7 +342,7 @@ export default function GalleryPage() {
   const handleItemClick = (e: React.MouseEvent, item: Model & { type: "model" }) => {
     e.stopPropagation()
     const next = new Set(selectedItems)
-    if (e.shiftKey && lastSelectedItem.current) {
+    if (e.shiftKey && lastSelectedItem.current && !isMobile) {
       const li = filteredItems.findIndex((i) => i.id === lastSelectedItem.current)
       const ci = filteredItems.findIndex((i) => i.id === item.id)
       const [s, t] = [li, ci].sort((a, b) => a - b)
@@ -637,11 +643,12 @@ export default function GalleryPage() {
   }
 
   if (modelId) {
-    if (!selectedModel) return <div className="w-full h-screen" />
+    if (!selectedModel) return <div className="fixed inset-0 bg-black" />
     return (
-      <div className="w-full h-screen relative" style={bgStyle}>
+      <div className="fixed inset-0" style={bgStyle}>
         <Canvas
           shadows
+          dpr={[1, 1.5]}
           gl={{ preserveDrawingBuffer: true, antialias: true, alpha: true }}
           onCreated={({ gl }) => {
             gl.setClearAlpha(0)
@@ -714,94 +721,100 @@ export default function GalleryPage() {
         </Canvas>
 
         <div className="absolute top-4 left-4 z-10">
-          <Button variant="ghost" size="icon" onClick={handleCloseViewer} className="text-white bg-black/50 backdrop-blur-sm hover:bg-white/20 rounded-full">
+          <Button variant="ghost" size="icon" onClick={handleCloseViewer} className="text-white bg-black/50 backdrop-blur-sm hover:bg-white/20 rounded-full h-10 w-10">
             <ChevronLeft className="h-6 w-6" />
           </Button>
         </div>
 
-        <div className="absolute top-4 right-4 w-[360px] bg-black/50 backdrop-blur-sm border border-white/20 rounded-lg text-white z-10 flex flex-col max-h-[calc(100vh-2rem)]">
-          <div className="flex items-center justify-between p-4">
+        {isSettingsPanelOpen && isMobile && <div className="fixed inset-0 bg-black/60 z-20" onClick={() => setIsSettingsPanelOpen(false)} />}
+        <div
+          className={cn(
+            "bg-black/50 backdrop-blur-sm border border-white/20 text-white flex flex-col z-30",
+            "absolute top-4 right-4 w-[360px] rounded-lg max-h-[calc(100vh-2rem)]",
+            isMobile && "fixed top-auto bottom-0 left-0 right-0 w-full max-h-[80svh] rounded-t-2xl rounded-b-none border-b-0 transform transition-transform duration-300 ease-in-out",
+            isMobile && (isSettingsPanelOpen ? "translate-y-0" : "translate-y-full")
+          )}
+        >
+          <div className="flex items-center justify-between p-4 flex-shrink-0">
             <div className="flex items-center gap-2">
-              <span className="text-xs">Ground</span>
+              <span className="text-sm">Ground</span>
               <Switch checked={groundEnabled} onCheckedChange={setGroundEnabled} />
             </div>
             <button onClick={() => setIsSettingsPanelOpen(!isSettingsPanelOpen)} className="p-1 -m-1">
-              <ChevronDown className={`h-5 w-5 transition-transform ${isSettingsPanelOpen ? "rotate-180" : ""}`} />
+              {isMobile ? <XIcon className="h-5 w-5" /> : <ChevronDown className={`h-5 w-5 transition-transform ${isSettingsPanelOpen ? "rotate-180" : ""}`} />}
             </button>
           </div>
-          {isSettingsPanelOpen && (
-            <SettingsPanel
-              model={selectedModel}
-              onUpdate={handleModelUpdate}
-              onDelete={() => {
-                setSelectedItems(new Set([selectedModel.id]))
-                handleBulkDelete()
-              }}
-              onThumbnailUpload={handleThumbnailUpload}
-              onCaptureThumbnail={handleCaptureThumbnail}
-              onDeleteThumbnail={handleDeleteThumbnail}
-              lights={lights}
-              onLightChange={handleLightChange}
-              addLight={addLight}
-              removeLight={removeLight}
-              cloneLight={cloneLight}
-              toggleLightVisibility={toggleLightVisibility}
-              selectedLightId={selectedLightId}
-              onSelectLight={setSelectedLightId}
-              onFocusLight={focusLightOnModel}
-              lightsEnabled={lightsEnabled}
-              onLightsEnabledChange={setLightsEnabled}
-              environmentEnabled={environmentEnabled}
-              onEnvironmentEnabledChange={setEnvironmentEnabled}
-              bloomEnabled={bloomEnabled}
-              onBloomEnabledChange={setBloomEnabled}
-              bgType={bgType}
-              onBgTypeChange={setBgType}
-              bgColor1={bgColor1}
-              onBgColor1Change={setBgColor1}
-              bgColor2={bgColor2}
-              onBgColor2Change={setBgColor2}
-              bgImage={bgImage}
-              onBgImageChange={setBgImage}
-              materialMode={materialMode}
-              onMaterialModeChange={setMaterialMode}
-              fov={fov}
-              onFovChange={setFov}
-              isOrthographic={isOrthographic}
-              onIsOrthographicChange={setIsOrthographic}
-              matOverrideEnabled={matOverrideEnabled}
-              onMatOverrideEnabledChange={setMatOverrideEnabled}
-              matBaseColor={matBaseColor}
-              onMatBaseColorChange={setMatBaseColor}
-              matMetalness={matMetalness}
-              onMatMetalnessChange={setMatMetalness}
-              matRoughness={matRoughness}
-              onMatRoughnessChange={setMatRoughness}
-              matClearcoat={matClearcoat}
-              onMatClearcoatChange={setMatClearcoat}
-              matClearcoatRoughness={matClearcoatRough}
-              onMatClearcoatRoughnessChange={setMatClearcoatRough}
-              matIOR={matIOR}
-              onMatIORChange={setMatIOR}
-              matTransmission={matTransmission}
-              onMatTransmissionChange={setMatTransmission}
-              onSaveView={handleSaveViewSettings}
-              onDeleteView={handleDeleteViewSettings}
-              onResetView={() => resetViewSettings(selectedModel.view_settings)}
-              onApplyPreset={(n) => applyPreset(n)}
-              presets={lightingPresets.map((p) => p.name)}
-            />
-          )}
+          <SettingsPanel
+            model={selectedModel}
+            onUpdate={handleModelUpdate}
+            onDelete={() => {
+              setSelectedItems(new Set([selectedModel.id]))
+              handleBulkDelete()
+            }}
+            onThumbnailUpload={handleThumbnailUpload}
+            onCaptureThumbnail={handleCaptureThumbnail}
+            onDeleteThumbnail={handleDeleteThumbnail}
+            lights={lights}
+            onLightChange={handleLightChange}
+            addLight={addLight}
+            removeLight={removeLight}
+            cloneLight={cloneLight}
+            toggleLightVisibility={toggleLightVisibility}
+            selectedLightId={selectedLightId}
+            onSelectLight={setSelectedLightId}
+            onFocusLight={focusLightOnModel}
+            lightsEnabled={lightsEnabled}
+            onLightsEnabledChange={setLightsEnabled}
+            environmentEnabled={environmentEnabled}
+            onEnvironmentEnabledChange={setEnvironmentEnabled}
+            bloomEnabled={bloomEnabled}
+            onBloomEnabledChange={setBloomEnabled}
+            bgType={bgType}
+            onBgTypeChange={setBgType}
+            bgColor1={bgColor1}
+            onBgColor1Change={setBgColor1}
+            bgColor2={bgColor2}
+            onBgColor2Change={setBgColor2}
+            bgImage={bgImage}
+            onBgImageChange={setBgImage}
+            materialMode={materialMode}
+            onMaterialModeChange={setMaterialMode}
+            fov={fov}
+            onFovChange={setFov}
+            isOrthographic={isOrthographic}
+            onIsOrthographicChange={setIsOrthographic}
+            matOverrideEnabled={matOverrideEnabled}
+            onMatOverrideEnabledChange={setMatOverrideEnabled}
+            matBaseColor={matBaseColor}
+            onMatBaseColorChange={setMatBaseColor}
+            matMetalness={matMetalness}
+            onMatMetalnessChange={setMatMetalness}
+            matRoughness={matRoughness}
+            onMatRoughnessChange={setMatRoughness}
+            matClearcoat={matClearcoat}
+            onMatClearcoatChange={setMatClearcoat}
+            matClearcoatRoughness={matClearcoatRough}
+            onMatClearcoatRoughnessChange={setMatClearcoatRough}
+            matIOR={matIOR}
+            onMatIORChange={setMatIOR}
+            matTransmission={matTransmission}
+            onMatTransmissionChange={setMatTransmission}
+            onSaveView={handleSaveViewSettings}
+            onDeleteView={handleDeleteViewSettings}
+            onResetView={() => resetViewSettings(selectedModel.view_settings)}
+            onApplyPreset={(n) => applyPreset(n)}
+            presets={lightingPresets.map((p) => p.name)}
+          />
         </div>
 
-        <div className="absolute bottom-4 left-1/2 -translate-x-1/2 bg-black/50 backdrop-blur-sm p-2 rounded-full flex items-center gap-1">
-          <Button variant={materialMode === "white" ? "secondary" : "ghost"} size="icon" onClick={() => setMaterialMode("white")} className="text-white rounded-full">
+        <div className="absolute bottom-4 left-1/2 -translate-x-1/2 bg-black/50 backdrop-blur-sm p-2 rounded-full flex items-center gap-1 z-10">
+          <Button variant={materialMode === "white" ? "secondary" : "ghost"} size="icon" onClick={() => setMaterialMode("white")} className="text-white rounded-full h-11 w-11">
             <div className="w-6 h-6 rounded-full bg-white" />
           </Button>
-          <Button variant={materialMode === "pbr" ? "secondary" : "ghost"} size="icon" onClick={() => setMaterialMode("pbr")} className="text-white rounded-full">
+          <Button variant={materialMode === "pbr" ? "secondary" : "ghost"} size="icon" onClick={() => setMaterialMode("pbr")} className="text-white rounded-full h-11 w-11">
             <Palette />
           </Button>
-          <Button variant={materialMode === "normal" ? "secondary" : "ghost"} size="icon" onClick={() => setMaterialMode("normal")} className="text-white rounded-full">
+          <Button variant={materialMode === "normal" ? "secondary" : "ghost"} size="icon" onClick={() => setMaterialMode("normal")} className="text-white rounded-full h-11 w-11">
             <div className="w-6 h-6 rounded-full bg-gradient-to-br from-red-500 via-green-500 to-blue-500" />
           </Button>
           <Button
@@ -815,23 +828,37 @@ export default function GalleryPage() {
               a.click()
               document.body.removeChild(a)
             }}
-            className="text-white rounded-full"
+            className="text-white rounded-full h-11 w-11"
           >
             <Download />
           </Button>
         </div>
+
+        {!isMobile && (
+          <Button
+            variant="ghost"
+            size="icon"
+            onClick={() => setIsSettingsPanelOpen(true)}
+            className={cn(
+              "absolute top-4 right-4 z-10 text-white bg-black/50 backdrop-blur-sm hover:bg-white/20 rounded-full h-10 w-10",
+              isSettingsPanelOpen && "opacity-0 pointer-events-none"
+            )}
+          >
+            <ChevronDown />
+          </Button>
+        )}
       </div>
     )
   }
 
   return (
-    <div className="h-screen bg-black text-white relative flex flex-col">
-      <div className="flex items-center justify-between px-4 md:px-8 py-4">
-        <div className="text-sm text-white/70">
+    <div className="h-[100svh] bg-black text-white relative flex flex-col">
+      <div className="flex items-center justify-between flex-wrap gap-y-2 px-4 md:px-8 py-4">
+        <div className="text-sm text-white/70 truncate">
           {breadcrumbs.map((c, i) => (
             <Fragment key={c.id ?? "root"}>
-              <span className={i === breadcrumbs.length - 1 ? "text-white" : "text-white/60"}>{c.name}</span>
-              {i < breadcrumbs.length - 1 && <span className="mx-1 text-white/30">/</span>}
+              <span className={i === breadcrumbs.length - 1 ? "text-white font-medium" : "text-white/60"}>{c.name}</span>
+              {i < breadcrumbs.length - 1 && <span className="mx-1.5 text-white/30">/</span>}
             </Fragment>
           ))}
           {gallery?.currentFolder && (
@@ -843,7 +870,7 @@ export default function GalleryPage() {
         <div className="flex items-center gap-2">
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
-              <Button variant="outline" size="icon" className="h-8 w-8 border-white/20 bg-transparent">
+              <Button variant="outline" size="icon" className="h-9 w-9 border-white/20 bg-transparent">
                 <ListFilter className="h-4 w-4" />
               </Button>
             </DropdownMenuTrigger>
@@ -860,27 +887,27 @@ export default function GalleryPage() {
             </DropdownMenuContent>
           </DropdownMenu>
 
-          <Button variant="secondary" size="icon" className="h-8 w-8 rounded-full" onClick={() => document.querySelector<HTMLInputElement>('input[type="file"]')?.click()}>
+          <Button variant="secondary" size="icon" className="h-9 w-9 rounded-full" onClick={() => document.querySelector<HTMLInputElement>('input[type="file"]')?.click()}>
             <Plus className="h-4 w-4" />
           </Button>
         </div>
       </div>
 
-      <div className={cn("px-4 md:px-8", filteredItems.length === 0 && !searchQuery ? "pt-24" : "pt-6")}>
+      <div className={cn("px-4 md:px-8", filteredItems.length === 0 && !searchQuery ? "pt-12 md:pt-24" : "pt-4 md:pt-6")}>
         <div className={cn("mx-auto", filteredItems.length === 0 && !searchQuery ? "max-w-2xl" : "max-w-4xl")}>
           <div className={cn("relative", filteredItems.length === 0 && !searchQuery ? "" : "mb-4")}>
-            <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-5 w-5 text-white/50" />
+            <Search className="absolute left-4 top-1/2 -translate-y-1/2 h-5 w-5 text-white/50" />
             <Input
               type="search"
-              placeholder="Search for models, or tags..."
-              className="pl-11 pr-12 h-12 rounded-full bg-white/10 border-white/20 text-white placeholder:text-white/60"
+              placeholder="Search models..."
+              className="pl-12 pr-12 h-12 rounded-full bg-white/10 border-white/20 text-base text-white placeholder:text-white/60"
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
             />
             <Button
               variant="ghost"
               size="icon"
-              className="absolute right-2 top-1/2 -translate-y-1/2 h-8 w-8 text-white/60 hover:text-white"
+              className="absolute right-2 top-1/2 -translate-y-1/2 h-9 w-9 text-white/60 hover:text-white"
               onClick={handleFeelingLucky}
               title="I'm Feeling Lucky"
             >
@@ -893,7 +920,7 @@ export default function GalleryPage() {
               {(["all", "models", "public", "drafts"] as Pill[]).map((k) => (
                 <button
                   key={k}
-                  className={cn("px-3 py-1.5 rounded-full text-sm", pill === k ? "bg-white text-black" : "bg-white/10 text-white/80 hover:bg-white/20")}
+                  className={cn("px-3.5 py-1.5 rounded-full text-sm font-medium", pill === k ? "bg-white text-black" : "bg-white/10 text-white/80 hover:bg-white/20")}
                   onClick={() => setPill(k)}
                 >
                   {k === "all" ? "All" : k[0].toUpperCase() + k.slice(1)}
@@ -903,9 +930,9 @@ export default function GalleryPage() {
 
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
-                <Button variant="outline" className="h-8 px-3 border-white/20 bg-transparent flex items-center gap-2">
+                <Button variant="outline" className="h-9 px-4 border-white/20 bg-transparent flex items-center gap-2 text-sm">
                   <ListFilter className="h-4 w-4" />
-                  Filters{activeFilterCount > 0 && <span className="ml-1 rounded-full bg-white text-black text-xs px-2 py-0.5">{activeFilterCount}</span>}
+                  Filters{activeFilterCount > 0 && <span className="ml-2 rounded-full bg-white text-black text-xs font-bold px-2 py-0.5">{activeFilterCount}</span>}
                 </Button>
               </DropdownMenuTrigger>
               <DropdownMenuContent align="end" className="w-72">
@@ -983,7 +1010,7 @@ export default function GalleryPage() {
         <input type="file" className="hidden" multiple accept=".glb" onChange={(e) => handleUploadAction(e.target.files)} />
 
         {isLoading && (
-          <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 xl:grid-cols-6 gap-4 mt-6">
+          <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-4 mt-6">
             {Array.from({ length: 18 }).map((_, i) => (
               <Skeleton key={i} className="aspect-square rounded-lg bg-white/10" />
             ))}
@@ -995,7 +1022,7 @@ export default function GalleryPage() {
         {!isLoading && filteredItems.length === 0 && searchQuery && <div className="text-center text-white/60 mt-10">No results.</div>}
 
         {!isLoading && filteredItems.length > 0 && (
-          <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 xl:grid-cols-6 gap-4 mt-6">
+          <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-4 mt-6">
             {filteredItems.map((item) => (
               <ItemContextMenu
                 key={item.id}
@@ -1015,21 +1042,23 @@ export default function GalleryPage() {
                 <div
                   onClick={(e) => handleItemClick(e, item)}
                   onDoubleClick={() => handleModelClick(item)}
+                  onPointerEnter={() => useGLTF.preload(item.model_url)}
                   className={cn(
                     "group relative aspect-square rounded-lg overflow-hidden cursor-pointer transition-all duration-200 bg-white/5",
-                    selectedItems.has(item.id) && "ring-2 ring-white ring-offset-[3px] ring-offset-black"
+                    selectedItems.has(item.id) && "ring-2 ring-white ring-offset-2 ring-offset-black"
                   )}
                 >
                   <>
                     <img
                       src={item.thumbnail_url || "/placeholder.svg"}
                       alt={item.name}
-                      className="w-full h-full object-contain transition-transform duration-300 group-hover:scale-110"
+                      className="w-full h-full object-contain transition-transform duration-300 group-hover:scale-105"
+                      loading="lazy"
                       onError={(e) => {
                         ; (e.target as HTMLImageElement).src = `/placeholder.svg?width=400&height=400&query=error`
                       }}
                     />
-                    <div className="absolute inset-0 bg-black/60 opacity-0 group-hover:opacity-100 transition-opacity duration-300 flex items-end p-2">
+                    <div className="absolute inset-0 bg-gradient-to-t from-black/80 to-transparent opacity-0 group-hover:opacity-100 transition-opacity duration-300 flex items-end p-3">
                       <p className="text-sm font-semibold truncate text-white">{item.name}</p>
                     </div>
                   </>
@@ -1041,7 +1070,7 @@ export default function GalleryPage() {
                         c ? next.add(item.id) : next.delete(item.id)
                         setSelectedItems(next)
                       }}
-                      className="bg-black/50 border-white/50 data-[state=checked]:bg-white data-[state=checked]:text-black"
+                      className="h-5 w-5 bg-black/50 border-white/50 data-[state=checked]:bg-white data-[state=checked]:text-black"
                     />
                   </div>
                   <div className="absolute bottom-2 left-2">{item.is_public ? <Globe className="h-4 w-4 text-white/70" /> : <Lock className="h-4 w-4 text-white/70" />}</div>

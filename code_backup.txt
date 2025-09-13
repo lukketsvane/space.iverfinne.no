@@ -206,8 +206,8 @@ export default function GalleryPage() {
 
   const [matOverrideEnabled, setMatOverrideEnabled] = useState(false)
   const [matBaseColor, setMatBaseColor] = useState<string>("#e5e5e5")
-  const [matMetalness, setMatMetalness] = useState<number>(0)
-  const [matRoughness, setMatRoughness] = useState<number>(0.6)
+  const [matMetalness, setMatMetalness] = useState<number>(1)
+  const [matRoughness, setMatRoughness] = useState<number>(1)
   const [matClearcoat, setMatClearcoat] = useState<number>(0)
   const [matClearcoatRough, setMatClearcoatRough] = useState<number>(0.6)
   const [matIOR, setMatIOR] = useState<number>(1.5)
@@ -243,8 +243,8 @@ export default function GalleryPage() {
       setIsOrthographic(s?.orthographic ?? false)
       setMatOverrideEnabled(!!s?.materialOverride?.enabled)
       setMatBaseColor(s?.materialOverride?.color ?? "#e5e5e5")
-      setMatMetalness(s?.materialOverride?.metalness ?? 0)
-      setMatRoughness(s?.materialOverride?.roughness ?? 0.6)
+      setMatMetalness(s?.materialOverride?.metalness ?? 1)
+      setMatRoughness(s?.materialOverride?.roughness ?? 1)
       setMatClearcoat(s?.materialOverride?.clearcoat ?? 0)
       setMatClearcoatRough(s?.materialOverride?.clearcoatRoughness ?? 0.6)
       setMatIOR(s?.materialOverride?.ior ?? 1.5)
@@ -539,9 +539,14 @@ export default function GalleryPage() {
       if (k === "1") setMaterialMode("white")
       if (k === "2") setMaterialMode("pbr")
       if (k === "3") setMaterialMode("normal")
+      if (k === "f") {
+        e.preventDefault()
+        setBoundsKey((key) => key + 1)
+      }
       if (k === "o") {
         e.preventDefault()
         setIsOrthographic((prev) => !prev)
+        setBoundsKey((key) => key + 1)
       }
       if (k === "e") {
         e.preventDefault()
@@ -840,73 +845,6 @@ export default function GalleryPage() {
         <div className="flex items-center gap-2">
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
-              <Button variant="outline" className="h-8 px-3 border-white/20 bg-transparent flex items-center gap-2">
-                <ListFilter className="h-4 w-4" />
-                Filters{activeFilterCount > 0 && <span className="ml-1 rounded-full bg-white text-black text-xs px-2 py-0.5">{activeFilterCount}</span>}
-              </Button>
-            </DropdownMenuTrigger>
-            <DropdownMenuContent align="end" className="w-72">
-              <DropdownMenuLabel>Visibility</DropdownMenuLabel>
-              <DropdownMenuRadioGroup value={filterVisibility} onValueChange={(v: any) => setFilterVisibility(v)}>
-                <DropdownMenuRadioItem value="all">All</DropdownMenuRadioItem>
-                <DropdownMenuRadioItem value="public">Public</DropdownMenuRadioItem>
-                <DropdownMenuRadioItem value="private">Private</DropdownMenuRadioItem>
-              </DropdownMenuRadioGroup>
-              <DropdownMenuSeparator />
-              <DropdownMenuLabel>Folder</DropdownMenuLabel>
-              <div className="max-h-60 overflow-y-auto px-1">
-                {(allFolders ?? []).map((f) => (
-                  <DropdownMenuCheckboxItem
-                    key={f.id}
-                    checked={filterFolderIds.has(f.id)}
-                    onSelect={(e) => e.preventDefault()}
-                    onCheckedChange={(checked) => {
-                      const newSet = new Set(filterFolderIds)
-                      if (checked) {
-                        newSet.add(f.id)
-                      } else {
-                        newSet.delete(f.id)
-                      }
-                      setFilterFolderIds(newSet)
-                    }}
-                  >
-                    {f.name}
-                  </DropdownMenuCheckboxItem>
-                ))}
-              </div>
-              <DropdownMenuSeparator />
-              <DropdownMenuLabel>Date</DropdownMenuLabel>
-              <DropdownMenuRadioGroup value={filterDate} onValueChange={(v: any) => setFilterDate(v)}>
-                <DropdownMenuRadioItem value="any">Any time</DropdownMenuRadioItem>
-                <DropdownMenuRadioItem value="24h">Last 24 hours</DropdownMenuRadioItem>
-                <DropdownMenuRadioItem value="7d">Last 7 days</DropdownMenuRadioItem>
-                <DropdownMenuRadioItem value="30d">Last 30 days</DropdownMenuRadioItem>
-                <DropdownMenuRadioItem value="365d">Last year</DropdownMenuRadioItem>
-              </DropdownMenuRadioGroup>
-              <DropdownMenuSeparator />
-              <DropdownMenuLabel>Thumbnails</DropdownMenuLabel>
-              <DropdownMenuRadioGroup value={filterHasThumb} onValueChange={(v: any) => setFilterHasThumb(v)}>
-                <DropdownMenuRadioItem value="any">Any</DropdownMenuRadioItem>
-                <DropdownMenuRadioItem value="yes">Has thumbnail</DropdownMenuRadioItem>
-                <DropdownMenuRadioItem value="no">Missing thumbnail</DropdownMenuRadioItem>
-              </DropdownMenuRadioGroup>
-              <DropdownMenuSeparator />
-              <DropdownMenuCheckboxItem
-                checked={false}
-                onCheckedChange={() => {
-                  setFilterVisibility("all")
-                  setFilterFolderIds(new Set())
-                  setFilterDate("any")
-                  setFilterHasThumb("any")
-                }}
-              >
-                Clear filters
-              </DropdownMenuCheckboxItem>
-            </DropdownMenuContent>
-          </DropdownMenu>
-
-          <DropdownMenu>
-            <DropdownMenuTrigger asChild>
               <Button variant="outline" size="icon" className="h-8 w-8 border-white/20 bg-transparent">
                 <ListFilter className="h-4 w-4" />
               </Button>
@@ -952,16 +890,85 @@ export default function GalleryPage() {
             </Button>
           </div>
 
-          <div className="flex items-center gap-2 flex-wrap">
-            {(["all", "models", "public", "drafts"] as Pill[]).map((k) => (
-              <button
-                key={k}
-                className={cn("px-3 py-1.5 rounded-full text-sm", pill === k ? "bg-white text-black" : "bg-white/10 text-white/80 hover:bg-white/20")}
-                onClick={() => setPill(k)}
-              >
-                {k === "all" ? "All" : k[0].toUpperCase() + k.slice(1)}
-              </button>
-            ))}
+          <div className="flex items-center justify-between gap-2 flex-wrap mt-4">
+            <div className="flex items-center gap-2 flex-wrap">
+              {(["all", "models", "public", "drafts"] as Pill[]).map((k) => (
+                <button
+                  key={k}
+                  className={cn("px-3 py-1.5 rounded-full text-sm", pill === k ? "bg-white text-black" : "bg-white/10 text-white/80 hover:bg-white/20")}
+                  onClick={() => setPill(k)}
+                >
+                  {k === "all" ? "All" : k[0].toUpperCase() + k.slice(1)}
+                </button>
+              ))}
+            </div>
+
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button variant="outline" className="h-8 px-3 border-white/20 bg-transparent flex items-center gap-2">
+                  <ListFilter className="h-4 w-4" />
+                  Filters{activeFilterCount > 0 && <span className="ml-1 rounded-full bg-white text-black text-xs px-2 py-0.5">{activeFilterCount}</span>}
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end" className="w-72">
+                <DropdownMenuLabel>Visibility</DropdownMenuLabel>
+                <DropdownMenuRadioGroup value={filterVisibility} onValueChange={(v: any) => setFilterVisibility(v)}>
+                  <DropdownMenuRadioItem value="all">All</DropdownMenuRadioItem>
+                  <DropdownMenuRadioItem value="public">Public</DropdownMenuRadioItem>
+                  <DropdownMenuRadioItem value="private">Private</DropdownMenuRadioItem>
+                </DropdownMenuRadioGroup>
+                <DropdownMenuSeparator />
+                <DropdownMenuLabel>Folder</DropdownMenuLabel>
+                <div className="max-h-60 overflow-y-auto px-1">
+                  {(allFolders ?? []).map((f) => (
+                    <DropdownMenuCheckboxItem
+                      key={f.id}
+                      checked={filterFolderIds.has(f.id)}
+                      onSelect={(e) => e.preventDefault()}
+                      onCheckedChange={(checked) => {
+                        const newSet = new Set(filterFolderIds)
+                        if (checked) {
+                          newSet.add(f.id)
+                        } else {
+                          newSet.delete(f.id)
+                        }
+                        setFilterFolderIds(newSet)
+                      }}
+                    >
+                      {f.name}
+                    </DropdownMenuCheckboxItem>
+                  ))}
+                </div>
+                <DropdownMenuSeparator />
+                <DropdownMenuLabel>Date</DropdownMenuLabel>
+                <DropdownMenuRadioGroup value={filterDate} onValueChange={(v: any) => setFilterDate(v)}>
+                  <DropdownMenuRadioItem value="any">Any time</DropdownMenuRadioItem>
+                  <DropdownMenuRadioItem value="24h">Last 24 hours</DropdownMenuRadioItem>
+                  <DropdownMenuRadioItem value="7d">Last 7 days</DropdownMenuRadioItem>
+                  <DropdownMenuRadioItem value="30d">Last 30 days</DropdownMenuRadioItem>
+                  <DropdownMenuRadioItem value="365d">Last year</DropdownMenuRadioItem>
+                </DropdownMenuRadioGroup>
+                <DropdownMenuSeparator />
+                <DropdownMenuLabel>Thumbnails</DropdownMenuLabel>
+                <DropdownMenuRadioGroup value={filterHasThumb} onValueChange={(v: any) => setFilterHasThumb(v)}>
+                  <DropdownMenuRadioItem value="any">Any</DropdownMenuRadioItem>
+                  <DropdownMenuRadioItem value="yes">Has thumbnail</DropdownMenuRadioItem>
+                  <DropdownMenuRadioItem value="no">Missing thumbnail</DropdownMenuRadioItem>
+                </DropdownMenuRadioGroup>
+                <DropdownMenuSeparator />
+                <DropdownMenuCheckboxItem
+                  checked={false}
+                  onCheckedChange={() => {
+                    setFilterVisibility("all")
+                    setFilterFolderIds(new Set())
+                    setFilterDate("any")
+                    setFilterHasThumb("any")
+                  }}
+                >
+                  Clear filters
+                </DropdownMenuCheckboxItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
           </div>
         </div>
       </div>
@@ -1511,7 +1518,7 @@ export function SettingsPanel(p: SettingsPanelProps) {
 
                     <div className="space-y-2 bg-white/5 p-3 rounded-md">
                         <div className="flex items-center justify-between text-xs">
-                            <label>Override (Clay)</label>
+                            <label>Override</label>
                             <Switch checked={matOverrideEnabled} onCheckedChange={onMatOverrideEnabledChange} />
                         </div>
 
@@ -1853,9 +1860,11 @@ const mkOverride = (o: {
     clearcoatRoughness: number
     ior: number
     transmission: number
+    map?: THREE.Texture | null
 }) => {
     const mat = new THREE.MeshPhysicalMaterial({
-        color: new THREE.Color(o.color),
+        color: o.map ? 0xffffff : new THREE.Color(o.color),
+        map: o.map || null,
         metalness: o.metalness,
         roughness: o.roughness,
         clearcoat: o.clearcoat,
@@ -1952,28 +1961,15 @@ export const ModelViewer = forwardRef<
             }
             const base = originals.current.get(mesh.uuid)
             if (Array.isArray(base)) {
-                const ov = base.map(() =>
-                    mkOverride({
-                        color: materialOverride.color,
-                        metalness: materialOverride.metalness,
-                        roughness: materialOverride.roughness,
-                        clearcoat: materialOverride.clearcoat,
-                        clearcoatRoughness: materialOverride.clearcoatRoughness,
-                        ior: materialOverride.ior,
-                        transmission: materialOverride.transmission,
-                    }),
+                const ov = base.map((m: any) =>
+                    mkOverride({ ...materialOverride, map: m.map || null })
                 )
                 overrides.current.set(mesh.uuid, ov)
                 mesh.material = ov
             } else {
                 const ov = mkOverride({
-                    color: materialOverride.color,
-                    metalness: materialOverride.metalness,
-                    roughness: materialOverride.roughness,
-                    clearcoat: materialOverride.clearcoat,
-                    clearcoatRoughness: materialOverride.clearcoatRoughness,
-                    ior: materialOverride.ior,
-                    transmission: materialOverride.transmission,
+                    ...materialOverride,
+                    map: (base as any)?.map || null,
                 })
                 overrides.current.set(mesh.uuid, ov)
                 mesh.material = ov
@@ -2004,9 +2000,10 @@ export function SpotLightInScene({ light }: { light: Light }) {
                 penumbra={light.penumbra}
                 decay={light.decay}
                 castShadow
-                shadow-mapSize={[1024, 1024]}
-                shadow-bias={-0.00015}
-                distance={0}
+                shadow-mapSize={[2048, 2048]}
+                shadow-bias={-0.0001}
+                shadow-normalBias={0.02}
+                distance={light.distance ?? 0}
             />
             <primitive object={target.current} />
         </>

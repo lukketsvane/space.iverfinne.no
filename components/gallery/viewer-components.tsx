@@ -1,9 +1,10 @@
 ﻿"use client"
+import { useIsMobile } from "@/hooks/use-mobile"
 import { kelvinToRgb } from "@/lib/utils"
 import type { Light } from "@/types"
 import { SpotLight, useGLTF } from "@react-three/drei"
 import { useThree } from "@react-three/fiber"
-import { forwardRef, useEffect, useImperativeHandle, useMemo, useRef } from "react"
+import React, { forwardRef, useEffect, useImperativeHandle, useMemo, useRef } from "react"
 import * as THREE from "three"
 
 export function Loader() {
@@ -41,7 +42,7 @@ const mkOverride = (o: {
     return mat
 }
 
-export const ModelViewer = forwardRef<
+const ModelViewerComponent = forwardRef<
     THREE.Group,
     {
         modelUrl: string
@@ -123,17 +124,17 @@ export const ModelViewer = forwardRef<
                 g.normalizeNormals()
             }
             const base = originals.current.get(mesh.uuid)
+            const createOverrideMaterial = (mat: any) => mkOverride({
+                ...materialOverride,
+                map: (mat as any)?.map || null,
+            });
+
             if (Array.isArray(base)) {
-                const ov = base.map((m: any) =>
-                    mkOverride({ ...materialOverride, map: m.map || null })
-                )
+                const ov = base.map(createOverrideMaterial)
                 overrides.current.set(mesh.uuid, ov)
                 mesh.material = ov
             } else {
-                const ov = mkOverride({
-                    ...materialOverride,
-                    map: (base as any)?.map || null,
-                })
+                const ov = createOverrideMaterial(base)
                 overrides.current.set(mesh.uuid, ov)
                 mesh.material = ov
             }
@@ -142,16 +143,21 @@ export const ModelViewer = forwardRef<
 
     return <primitive ref={ref} object={scene} />
 })
-ModelViewer.displayName = "ModelViewer"
+ModelViewerComponent.displayName = "ModelViewer"
+export const ModelViewer = React.memo(ModelViewerComponent)
 
 export function SpotLightInScene({ light }: { light: Light }) {
     const target = useRef(new THREE.Object3D())
     const { r, g, b } = kelvinToRgb(light.kelvin)
     const color = useMemo(() => new THREE.Color(r, g, b), [r, g, b])
+    const isMobile = useIsMobile()
+
     useEffect(() => {
         target.current.position.set(...light.targetPosition)
     }, [light.targetPosition])
+
     if (!light.visible) return null
+
     return (
         <>
             <SpotLight
@@ -163,7 +169,7 @@ export function SpotLightInScene({ light }: { light: Light }) {
                 penumbra={light.penumbra}
                 decay={light.decay}
                 castShadow
-                shadow-mapSize={[2048, 2048]}
+                shadow-mapSize={isMobile ? [1024, 1024] : [2048, 2048]}
                 shadow-bias={-0.0001}
                 shadow-normalBias={0.02}
                 distance={light.distance ?? 0}
