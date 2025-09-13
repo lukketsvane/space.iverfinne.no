@@ -10,8 +10,9 @@ import { Switch } from "@/components/ui/switch"
 import { cn } from "@/lib/utils"
 import type { Light, Model } from "@/types"
 import { useGesture } from "@use-gesture/react"
-import { Camera, CopyIcon as Clone, Crosshair, Eye, EyeOff, Globe, Lock, Plus, RotateCcw, Save, Trash2, Upload } from "lucide-react"
+import { Camera, CopyIcon as Clone, Crosshair, Eye, EyeOff, Globe, Link, Lock, Plus, RotateCcw, Save, Trash2, Upload } from "lucide-react"
 import React, { useRef, useState } from "react"
+import { toast } from "sonner"
 
 // A more touch-friendly editable value component
 function EditableValue({
@@ -278,6 +279,16 @@ export function SettingsPanel(p: SettingsPanelProps) {
         r.readAsDataURL(file)
     }
 
+    const handleCopyLink = () => {
+        const url = `unikform.iverfinne.no/${model.id}`;
+        navigator.clipboard.writeText(url).then(() => {
+            toast.success("Link copied to clipboard!");
+        }).catch(err => {
+            console.error('Failed to copy link: ', err);
+            toast.error("Could not copy link to clipboard.");
+        });
+    };
+
     return (
         <div className="px-4 pb-4 flex flex-col h-full text-white overflow-y-auto">
             <div className="space-y-4 flex-1 overflow-y-auto pr-2 -mr-2">
@@ -295,6 +306,14 @@ export function SettingsPanel(p: SettingsPanelProps) {
                             {model.is_public ? "Public" : "Private"}
                         </Button>
                     </div>
+                    {model.is_public && (
+                        <div className="flex items-center justify-between">
+                            <label>Share Link</label>
+                            <Button size="icon" className="h-8 w-8" variant="ghost" onClick={handleCopyLink}>
+                                <Link className="h-4 w-4" />
+                            </Button>
+                        </div>
+                    )}
                     <div className="flex items-center justify-between">
                         <label>Thumbnail</label>
                         <div className="flex items-center gap-1">
