@@ -4,9 +4,8 @@ import "./globals.css"
 import { ThemeProvider } from "@/components/theme-provider"
 
 export const metadata: Metadata = {
-  title: "My Model Gallery",
-  description: "A gallery for your 3D models.",
-  generator: "v0.dev",
+  title: "antispace",
+  description: "",
 }
 
 export default function RootLayout({
