@@ -105,21 +105,40 @@ export default function GalleryPage() {
   const [editingFolder, setEditingFolder] = useState<Folder | null>(null)
 
   useEffect(() => {
-    if (document.querySelector('meta[name="viewport"]')) return
+    const head = document.head
+
+    // Meta tags for PWA/iOS homescreen experience
     const metaTags = [
       { name: "viewport", content: "width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no" },
       { name: "apple-mobile-web-app-capable", content: "yes" },
-      { name: "apple-mobile-web-app-status-bar-style", content: "black-translucent" }
+      { name: "apple-mobile-web-app-status-bar-style", content: "black-translucent" },
+      { name: "theme-color", content: "#000000" }
     ]
-    metaTags.forEach((tagInfo) => {
-      let meta = document.querySelector(`meta[name="${tagInfo.name}"]`) as HTMLMetaElement
-      if (meta) meta.content = tagInfo.content
-      else {
-        meta = document.createElement("meta")
-        meta.name = tagInfo.name
-        meta.content = tagInfo.content
-        document.head.appendChild(meta)
+
+    metaTags.forEach(tagInfo => {
+      let meta = head.querySelector(`meta[name="${tagInfo.name}"]`)
+      if (!meta) {
+        meta = document.createElement("meta");
+        (meta as HTMLMetaElement).name = tagInfo.name
+        head.appendChild(meta)
       }
+      (meta as HTMLMetaElement).content = tagInfo.content
+    })
+
+    // Link tags for manifest and icons
+    const linkTags = [
+      { rel: "manifest", href: "/manifest.json" },
+      { rel: "apple-touch-icon", href: "/apple-touch-icon.png" }
+    ]
+
+    linkTags.forEach(tagInfo => {
+      let link = head.querySelector(`link[rel="${tagInfo.rel}"]`)
+      if (!link) {
+        link = document.createElement("link");
+        (link as HTMLLinkElement).rel = tagInfo.rel
+        head.appendChild(link)
+      }
+      (link as HTMLLinkElement).href = tagInfo.href
     })
   }, [])
 
